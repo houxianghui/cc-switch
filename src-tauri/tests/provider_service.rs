@@ -177,8 +177,13 @@ command = "say"
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Codex, "new-provider")
-        .expect("switch provider should succeed");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "new-provider",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch provider should succeed");
 
     let auth_value: serde_json::Value =
         read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
@@ -307,8 +312,13 @@ requires_openai_auth = true
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Codex, "new-provider")
-        .expect("switch provider should succeed");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "new-provider",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch provider should succeed");
 
     let config_text =
         std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
@@ -444,8 +454,13 @@ requires_openai_auth = true
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Codex, "bridge-provider")
-        .expect("switch to bridge provider should succeed");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "bridge-provider",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch to bridge provider should succeed");
 
     let auth_value: serde_json::Value =
         read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
@@ -488,8 +503,13 @@ requires_openai_auth = true
         Some(true)
     );
 
-    ProviderService::switch(&state, AppType::Codex, "plain-provider")
-        .expect("switch away should backfill bridge provider");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "plain-provider",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch away should backfill bridge provider");
 
     let providers = state
         .db
@@ -606,8 +626,13 @@ wire_api = "responses"
         .await
         .expect("use ephemeral proxy port");
 
-    ProviderService::switch(&state, AppType::Codex, "deepseek-provider")
-        .expect("switch from official subscription to DeepSeek");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "deepseek-provider",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch from official subscription to DeepSeek");
 
     let auth_after_switch: serde_json::Value =
         read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth after switch");
@@ -779,8 +804,13 @@ requires_openai_auth = true
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Codex, "third-party")
-        .expect("switch to third-party provider should succeed");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "third-party",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch to third-party provider should succeed");
 
     assert!(
         !cc_switch_lib::get_codex_auth_path().exists(),
@@ -836,8 +866,13 @@ requires_openai_auth = false
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Codex, "third-party")
-        .expect("switch to third-party provider should succeed");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "third-party",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch to third-party provider should succeed");
 
     assert!(
         !cc_switch_lib::get_codex_auth_path().exists(),
@@ -887,9 +922,13 @@ fn provider_service_switch_codex_preserved_login_rejects_empty_third_party_confi
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    let err = ProviderService::switch(&state, AppType::Codex, "empty-config").expect_err(
-        "switching to an empty-config third-party provider with preservation on must fail",
-    );
+    let err = ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "empty-config",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect_err("switching to an empty-config third-party provider with preservation on must fail");
     assert!(
         err.to_string().contains("config.toml"),
         "error should explain the missing config.toml, got: {err}"
@@ -946,8 +985,13 @@ openai_base_url = "https://relay.example/v1"
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Codex, "legacy-shape")
-        .expect("legacy reroute shape must be normalized, not rejected");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "legacy-shape",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("legacy reroute shape must be normalized, not rejected");
 
     let live_config =
         std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
@@ -1011,8 +1055,13 @@ experimental_bearer_token = "config-carried-key"
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Codex, "raw-edited")
-        .expect("legacy reroute with a config-carried token must be normalized");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "raw-edited",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("legacy reroute with a config-carried token must be normalized");
 
     let live_config =
         std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
@@ -1067,8 +1116,13 @@ openai_base_url = "https://relay.example/v1"
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Codex, "legacy-shape")
-        .expect("default-path switch must normalize the legacy ambient-auth shape");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "legacy-shape",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("default-path switch must normalize the legacy ambient-auth shape");
 
     assert!(
         !cc_switch_lib::get_codex_auth_path().exists(),
@@ -1151,9 +1205,21 @@ wire_api = "responses"
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Codex, "good").expect("switch to the good provider");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "good",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch to the good provider");
 
-    ProviderService::switch(&state, AppType::Codex, "header-auth").expect_err(
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "header-auth",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect_err(
         "preservation-on switch must fail when a keyless config falls back to the official auth",
     );
 
@@ -1213,8 +1279,13 @@ http_headers = { Authorization = "Bearer explicit-header-token" }
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Codex, "header-auth")
-        .expect("preservation-on switch must keep supporting keyless header-auth providers");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "header-auth",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("preservation-on switch must keep supporting keyless header-auth providers");
 
     let config_text =
         std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
@@ -1285,8 +1356,13 @@ requires_openai_auth = true
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Codex, "codex-official")
-        .expect("switch to official provider should succeed without API key");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "codex-official",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch to official provider should succeed without API key");
 
     let auth_value: serde_json::Value =
         read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
@@ -1375,8 +1451,13 @@ requires_openai_auth = true
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Codex, "official-provider")
-        .expect("switch to official provider should succeed");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "official-provider",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch to official provider should succeed");
 
     assert!(
         !cc_switch_lib::get_codex_auth_path().exists(),
@@ -1442,8 +1523,13 @@ fn provider_service_reswitch_current_official_keeps_live_auth() {
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Codex, "official-provider")
-        .expect("re-switch to current official provider should succeed");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "official-provider",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("re-switch to current official provider should succeed");
 
     let auth_value: serde_json::Value =
         read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("auth.json must survive");
@@ -1543,8 +1629,13 @@ fn reapply_codex_official_live_resyncs_mcp_servers() {
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Codex, "codex-official")
-        .expect("switch to official provider");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "codex-official",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch to official provider");
     let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
         .expect("read config.toml after switch");
     assert!(
@@ -1644,8 +1735,13 @@ fn reapply_codex_official_live_projects_mcp_despite_broken_claude_json() {
 
     // 先切换建立"当前=官方"的前置状态，再破坏 claude 文件，
     // 让损坏只作用于被测的 reapply 路径。
-    ProviderService::switch(&state, AppType::Codex, "official-provider")
-        .expect("switch to official provider");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "official-provider",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch to official provider");
 
     // 破坏 ~/.claude.json：坏 JSON 能通过 should_sync_claude_mcp 门控
     // （文件存在即过），但 read_mcp_servers_map 解析必然报错。
@@ -1741,8 +1837,13 @@ fn switch_codex_projects_mcp_despite_broken_claude_json() {
     let claude_json = cc_switch_lib::get_claude_mcp_path();
     std::fs::write(&claude_json, "{ not valid json").expect("seed broken claude json");
 
-    ProviderService::switch(&state, AppType::Codex, "p")
-        .expect("broken ~/.claude.json must not fail an unrelated codex switch");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "p",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("broken ~/.claude.json must not fail an unrelated codex switch");
 
     let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
         .expect("read config.toml after switch");
@@ -1887,8 +1988,13 @@ fn provider_service_switch_codex_official_accounts_write_auth_json() {
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Codex, "official-b")
-        .expect("switch to official account B should write auth.json");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "official-b",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch to official account B should write auth.json");
     let auth_b: serde_json::Value =
         read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth B");
     assert_eq!(
@@ -1899,8 +2005,13 @@ fn provider_service_switch_codex_official_accounts_write_auth_json() {
         "switching official accounts must replace auth.json with the selected account"
     );
 
-    ProviderService::switch(&state, AppType::Codex, "official-a")
-        .expect("switch back to official account A should use backfilled live auth");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "official-a",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch back to official account A should use backfilled live auth");
     let auth_a: serde_json::Value =
         read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth A");
     assert_eq!(
@@ -1998,10 +2109,20 @@ requires_openai_auth = true
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Codex, "provider-b")
-        .expect("switch to provider b should succeed");
-    ProviderService::switch(&state, AppType::Codex, "provider-c")
-        .expect("switch to provider c should succeed");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "provider-b",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch to provider b should succeed");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "provider-c",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch to provider c should succeed");
 
     let providers = state
         .db
@@ -2234,8 +2355,13 @@ wire_api = "responses"
         "fixture keeps the proxy server stopped"
     );
 
-    ProviderService::switch(&state, AppType::Codex, "new-provider")
-        .expect("switch should update takeover backup instead of writing normal live config");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "new-provider",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch should update takeover backup instead of writing normal live config");
 
     let auth_after: serde_json::Value =
         read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
@@ -2399,8 +2525,13 @@ fn switch_packycode_gemini_updates_security_selected_type() {
 
     let state = create_test_state_with_config(&config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Gemini, "packy-gemini")
-        .expect("switching to PackyCode Gemini should succeed");
+    ProviderService::switch(
+        &state,
+        AppType::Gemini,
+        "packy-gemini",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switching to PackyCode Gemini should succeed");
 
     // Gemini security settings are written to ~/.gemini/settings.json, not ~/.cc-switch/settings.json
     let settings_path = home.join(".gemini").join("settings.json");
@@ -2454,8 +2585,13 @@ fn packycode_partner_meta_triggers_security_flag_even_without_keywords() {
 
     let state = create_test_state_with_config(&config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Gemini, "packy-meta")
-        .expect("switching to partner meta provider should succeed");
+    ProviderService::switch(
+        &state,
+        AppType::Gemini,
+        "packy-meta",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switching to partner meta provider should succeed");
 
     // Gemini security settings are written to ~/.gemini/settings.json, not ~/.cc-switch/settings.json
     let settings_path = home.join(".gemini").join("settings.json");
@@ -2510,8 +2646,13 @@ fn switch_google_official_gemini_preserves_env_vars() {
 
     let state = create_test_state_with_config(&config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Gemini, "google-official")
-        .expect("switching to Google official Gemini should succeed");
+    ProviderService::switch(
+        &state,
+        AppType::Gemini,
+        "google-official",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switching to Google official Gemini should succeed");
 
     // Verify env vars are preserved in ~/.gemini/.env
     let env_path = home.join(".gemini").join(".env");
@@ -2597,8 +2738,13 @@ fn provider_service_switch_claude_updates_live_and_state() {
 
     let state = create_test_state_with_config(&config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Claude, "new-provider")
-        .expect("switch provider should succeed");
+    ProviderService::switch(
+        &state,
+        AppType::Claude,
+        "new-provider",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch provider should succeed");
 
     let live_after: serde_json::Value =
         read_json_file(&settings_path).expect("read claude live settings");
@@ -2698,7 +2844,13 @@ fn switch_claude_syncs_new_shared_keys_from_live_into_common_config() {
         )
         .expect("seed common config snippet");
 
-    ProviderService::switch(&state, AppType::Claude, "b").expect("switch should succeed");
+    ProviderService::switch(
+        &state,
+        AppType::Claude,
+        "b",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch should succeed");
 
     // 片段应捕获到新增键，并保留已有共享键，且绝不含密钥
     let snippet = state
@@ -2821,7 +2973,13 @@ fn switch_claude_syncs_deletions_from_live_into_common_config() {
         )
         .expect("seed common config snippet");
 
-    ProviderService::switch(&state, AppType::Claude, "b").expect("switch should succeed");
+    ProviderService::switch(
+        &state,
+        AppType::Claude,
+        "b",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch should succeed");
 
     let snippet = state
         .db
@@ -2933,7 +3091,13 @@ command = "ghost-cmd"
         )
         .expect("seed codex common config snippet");
 
-    ProviderService::switch(&state, AppType::Codex, "b").expect("switch should succeed");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "b",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch should succeed");
 
     // 片段：捕获新增共享键、保留既有共享键；专属字段/密钥/注入产物一律不进
     let snippet = state
@@ -3083,7 +3247,13 @@ wire_api = "responses"
         )
         .expect("seed codex common config snippet");
 
-    ProviderService::switch(&state, AppType::Codex, "b").expect("switch should succeed");
+    ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "b",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch should succeed");
 
     let snippet = state
         .db
@@ -3168,7 +3338,13 @@ fn switch_claude_does_not_sync_common_config_for_opted_out_provider() {
         )
         .expect("seed common config snippet");
 
-    ProviderService::switch(&state, AppType::Claude, "b").expect("switch should succeed");
+    ProviderService::switch(
+        &state,
+        AppType::Claude,
+        "b",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch should succeed");
 
     let snippet = state
         .db
@@ -3245,7 +3421,13 @@ fn switch_claude_respects_explicitly_cleared_common_config() {
         .set_config_snippet_cleared(AppType::Claude.as_str(), true)
         .expect("mark snippet cleared");
 
-    ProviderService::switch(&state, AppType::Claude, "b").expect("switch should succeed");
+    ProviderService::switch(
+        &state,
+        AppType::Claude,
+        "b",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch should succeed");
 
     assert!(
         state
@@ -3265,8 +3447,13 @@ fn provider_service_switch_missing_provider_returns_error() {
 
     let state = create_test_state().expect("create test state");
 
-    let err = ProviderService::switch(&state, AppType::Claude, "missing")
-        .expect_err("switching missing provider should fail");
+    let err = ProviderService::switch(
+        &state,
+        AppType::Claude,
+        "missing",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect_err("switching missing provider should fail");
     match err {
         AppError::Message(msg) => {
             assert!(
@@ -3304,8 +3491,13 @@ fn provider_service_switch_codex_missing_auth_returns_error() {
 
     let state = create_test_state_with_config(&config).expect("create test state");
 
-    let err = ProviderService::switch(&state, AppType::Codex, "invalid")
-        .expect_err("switching should fail without auth");
+    let err = ProviderService::switch(
+        &state,
+        AppType::Codex,
+        "invalid",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect_err("switching should fail without auth");
     match err {
         AppError::Config(msg) => assert!(
             msg.contains("auth"),

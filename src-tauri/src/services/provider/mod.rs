@@ -10,7 +10,7 @@ mod usage;
 
 use indexmap::IndexMap;
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::app_config::AppType;
@@ -49,6 +49,14 @@ use live::{
     remove_opencode_provider_from_live, write_gemini_live,
 };
 use usage::validate_usage_script;
+
+/// Provider deletion result — currently just the cascaded schedule rule count,
+/// but structured so future fields (e.g. "fallback was nulled") can be added
+/// without breaking the IPC contract.
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteOutcome {
+    pub cascaded_rule_count: usize,
+}
 
 /// Codex official providers are safe to select during takeover: Codex keeps
 /// ownership of the active ChatGPT login and the proxy only forwards the
@@ -2506,8 +2514,13 @@ requires_openai_auth = true
                 .save_provider(AppType::Codex.as_str(), &unbound)
                 .expect("save unbound provider");
 
-            ProviderService::switch(state, AppType::Codex, "managed-official")
-                .expect("switch to managed official");
+            ProviderService::switch(
+                state,
+                AppType::Codex,
+                "managed-official",
+                crate::schedule_rules::SwitchSource::Manual,
+            )
+            .expect("switch to managed official");
             let live_auth: Value = read_json_file(&crate::codex_config::get_codex_auth_path())
                 .expect("read managed live auth");
             assert_eq!(
@@ -2535,8 +2548,13 @@ requires_openai_auth = true
             )
             .expect("simulate Codex CLI token rotation");
 
-            ProviderService::switch(state, AppType::Codex, "unbound-official")
-                .expect("switch to unbound official");
+            ProviderService::switch(
+                state,
+                AppType::Codex,
+                "unbound-official",
+                crate::schedule_rules::SwitchSource::Manual,
+            )
+            .expect("switch to unbound official");
 
             assert!(
                 !crate::codex_config::get_codex_auth_path().exists(),
@@ -2608,8 +2626,13 @@ wire_api = "responses"
                     .expect("save provider");
             }
 
-            ProviderService::switch(state, AppType::Codex, &provider_a.id)
-                .expect("activate managed A");
+            ProviderService::switch(
+                state,
+                AppType::Codex,
+                &provider_a.id,
+                crate::schedule_rules::SwitchSource::Manual,
+            )
+            .expect("activate managed A");
             let id_token_a = crate::codex_config::test_codex_id_token("user-a");
             write_json_file(
                 &crate::codex_config::get_codex_auth_path(),
@@ -2623,8 +2646,13 @@ wire_api = "responses"
             )
             .expect("rotate account A live auth");
 
-            ProviderService::switch(state, AppType::Codex, &provider_b.id)
-                .expect("switch managed A to managed B");
+            ProviderService::switch(
+                state,
+                AppType::Codex,
+                &provider_b.id,
+                crate::schedule_rules::SwitchSource::Manual,
+            )
+            .expect("switch managed A to managed B");
             assert_eq!(
                 tauri::async_runtime::block_on(
                     state
@@ -2655,8 +2683,13 @@ wire_api = "responses"
             )
             .expect("rotate account B live auth");
 
-            ProviderService::switch(state, AppType::Codex, &third_party.id)
-                .expect("switch managed B to API-key provider");
+            ProviderService::switch(
+                state,
+                AppType::Codex,
+                &third_party.id,
+                crate::schedule_rules::SwitchSource::Manual,
+            )
+            .expect("switch managed B to API-key provider");
             assert_eq!(
                 tauri::async_runtime::block_on(
                     state
@@ -2703,8 +2736,13 @@ wire_api = "responses"
                 .db
                 .save_provider(AppType::Codex.as_str(), &provider)
                 .expect("save managed official provider");
-            ProviderService::switch(state, AppType::Codex, &provider.id)
-                .expect("activate managed account A");
+            ProviderService::switch(
+                state,
+                AppType::Codex,
+                &provider.id,
+                crate::schedule_rules::SwitchSource::Manual,
+            )
+            .expect("activate managed account A");
             assert!(
                 tauri::async_runtime::block_on(state.db.get_live_backup(AppType::Codex.as_str()))
                     .expect("read initial live backup")
@@ -2804,8 +2842,13 @@ wire_api = "responses"
                 .db
                 .save_provider(AppType::Codex.as_str(), &provider)
                 .expect("save managed provider");
-            ProviderService::switch(state, AppType::Codex, &provider.id)
-                .expect("activate managed provider");
+            ProviderService::switch(
+                state,
+                AppType::Codex,
+                &provider.id,
+                crate::schedule_rules::SwitchSource::Manual,
+            )
+            .expect("activate managed provider");
 
             // Different refresh material at the exact manager generation
             // timestamp is ambiguous at millisecond precision. A same-account
@@ -2901,8 +2944,13 @@ wire_api = "responses"
                     .save_provider(AppType::Codex.as_str(), provider)
                     .expect("save provider");
             }
-            ProviderService::switch(state, AppType::Codex, &managed.id)
-                .expect("activate managed provider");
+            ProviderService::switch(
+                state,
+                AppType::Codex,
+                &managed.id,
+                crate::schedule_rules::SwitchSource::Manual,
+            )
+            .expect("activate managed provider");
 
             tauri::async_runtime::block_on(
                 state
@@ -2921,8 +2969,13 @@ wire_api = "responses"
                 .expect("seed CLI generation against legacy manager state");
 
             for attempt in 1..=2 {
-                let error = ProviderService::switch(state, AppType::Codex, &unbound.id)
-                    .expect_err("legacy conflict must block every switch-away retry");
+                let error = ProviderService::switch(
+                    state,
+                    AppType::Codex,
+                    &unbound.id,
+                    crate::schedule_rules::SwitchSource::Manual,
+                )
+                .expect_err("legacy conflict must block every switch-away retry");
                 assert!(
                     error
                         .to_string()
@@ -2980,8 +3033,13 @@ wire_api = "responses"
                 .db
                 .save_provider(AppType::Codex.as_str(), &provider)
                 .expect("save managed provider");
-            ProviderService::switch(state, AppType::Codex, &provider.id)
-                .expect("activate managed provider");
+            ProviderService::switch(
+                state,
+                AppType::Codex,
+                &provider.id,
+                crate::schedule_rules::SwitchSource::Manual,
+            )
+            .expect("activate managed provider");
             assert!(crate::codex_config::get_codex_auth_path().exists());
             assert!(crate::codex_config::codex_managed_oauth_live_auth_marker_exists());
 
@@ -3020,8 +3078,13 @@ wire_api = "responses"
                     .await
                     .expect("re-login managed account");
             });
-            ProviderService::switch(state, AppType::Codex, &provider.id)
-                .expect("reactivate managed provider after re-login");
+            ProviderService::switch(
+                state,
+                AppType::Codex,
+                &provider.id,
+                crate::schedule_rules::SwitchSource::Manual,
+            )
+            .expect("reactivate managed provider after re-login");
             assert!(crate::codex_config::get_codex_auth_path().exists());
 
             tauri::async_runtime::block_on(state.codex_oauth_manager.clear_auth())
@@ -3111,8 +3174,13 @@ wire_api = "responses"
                 .db
                 .save_provider(AppType::Codex.as_str(), &provider)
                 .expect("save managed provider");
-            ProviderService::switch(state, AppType::Codex, &provider.id)
-                .expect("activate managed provider");
+            ProviderService::switch(
+                state,
+                AppType::Codex,
+                &provider.id,
+                crate::schedule_rules::SwitchSource::Manual,
+            )
+            .expect("activate managed provider");
             assert!(crate::codex_config::get_codex_auth_path().exists());
             assert!(crate::codex_config::codex_managed_oauth_live_auth_marker_exists());
 
@@ -3222,8 +3290,13 @@ wire_api = "responses"
                 .save_provider(AppType::Codex.as_str(), &provider_b)
                 .expect("save second managed provider");
 
-            ProviderService::switch(state, AppType::Codex, &provider_a.id)
-                .expect("activate first managed provider");
+            ProviderService::switch(
+                state,
+                AppType::Codex,
+                &provider_a.id,
+                crate::schedule_rules::SwitchSource::Manual,
+            )
+            .expect("activate first managed provider");
             let auth_before: Value = read_json_file(&crate::codex_config::get_codex_auth_path())
                 .expect("read first managed auth");
             assert!(
@@ -3260,8 +3333,13 @@ wire_api = "responses"
                 .expect("install current-provider failure trigger");
             }
 
-            let error = ProviderService::switch(state, AppType::Codex, &provider_b.id)
-                .expect_err("DB current failure should abort managed switch");
+            let error = ProviderService::switch(
+                state,
+                AppType::Codex,
+                &provider_b.id,
+                crate::schedule_rules::SwitchSource::Manual,
+            )
+            .expect_err("DB current failure should abort managed switch");
             assert!(
                 error
                     .to_string()
@@ -3634,10 +3712,21 @@ wire_api = "responses"
                 .save_provider(AppType::Codex.as_str(), &managed)
                 .expect("save managed");
 
-            ProviderService::switch(state, AppType::Codex, "baseline").expect("switch to baseline");
+            ProviderService::switch(
+                state,
+                AppType::Codex,
+                "baseline",
+                crate::schedule_rules::SwitchSource::Manual,
+            )
+            .expect("switch to baseline");
 
             // 切到绑定了不存在账号的托管 provider：预检失败 → 返回 Err。
-            let result = ProviderService::switch(state, AppType::Codex, "managed-official");
+            let result = ProviderService::switch(
+                state,
+                AppType::Codex,
+                "managed-official",
+                crate::schedule_rules::SwitchSource::Manual,
+            );
             assert!(
                 result.is_err(),
                 "switch must fail when the managed OAuth token cannot be resolved"
@@ -4680,7 +4769,11 @@ impl ProviderService {
 
             Self::set_provider_live_config_managed(&mut provider, false);
             state.db.save_provider(app_type.as_str(), &provider)?;
-            state.db.delete_provider(app_type.as_str(), &original_id)?;
+            state.db.delete_provider_remapping_schedule_refs(
+                app_type.as_str(),
+                &original_id,
+                &provider.id,
+            )?;
 
             if crate::settings::get_current_provider(&app_type).as_deref() == Some(&original_id) {
                 crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
@@ -4934,9 +5027,21 @@ impl ProviderService {
     ///
     /// 同时检查本地 settings 和数据库的当前供应商，防止删除任一端正在使用的供应商。
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
-    pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
+    ///
+    /// 级联删除引用该 provider 的 schedule 规则与 provider 行本身，两者在同一个 SQLite
+    /// 事务内完成（spec 第 7 节），任一步失败都不会留下半删状态。级联现在发生在 live 配置
+    /// 移除之后，因此文件写入失败不会遗留孤立规则。
+    /// app_fallback_providers 上的外键是 ON DELETE SET NULL，会自动置空，无需手动处理。
+    pub fn delete(
+        state: &AppState,
+        app_type: AppType,
+        id: &str,
+    ) -> Result<DeleteOutcome, AppError> {
         if app_type == AppType::Pi {
-            return pi::delete(state, id);
+            let cascaded = pi::delete(state, id)?;
+            return Ok(DeleteOutcome {
+                cascaded_rule_count: cascaded,
+            });
         }
 
         // Additive mode apps - no current provider concept
@@ -4957,11 +5062,15 @@ impl ProviderService {
                         id,
                         variant.category,
                     )?;
-                    state.db.delete_provider(app_type.as_str(), id)?;
+                    let cascaded = state
+                        .db
+                        .delete_provider_cascading_rules(app_type.as_str(), id)?;
                     if was_current {
                         crate::services::OmoService::delete_config_file(variant)?;
                     }
-                    return Ok(());
+                    return Ok(DeleteOutcome {
+                        cascaded_rule_count: cascaded,
+                    });
                 }
             }
 
@@ -4983,8 +5092,12 @@ impl ProviderService {
                     _ => {}
                 }
             }
-            state.db.delete_provider(app_type.as_str(), id)?;
-            return Ok(());
+            let cascaded = state
+                .db
+                .delete_provider_cascading_rules(app_type.as_str(), id)?;
+            return Ok(DeleteOutcome {
+                cascaded_rule_count: cascaded,
+            });
         }
 
         // For other apps: Check both local settings and database
@@ -4997,7 +5110,12 @@ impl ProviderService {
             ));
         }
 
-        state.db.delete_provider(app_type.as_str(), id)
+        let cascaded = state
+            .db
+            .delete_provider_cascading_rules(app_type.as_str(), id)?;
+        Ok(DeleteOutcome {
+            cascaded_rule_count: cascaded,
+        })
     }
 
     /// Remove provider from live config only (for additive mode apps like OpenCode, OpenClaw)
@@ -5065,8 +5183,53 @@ impl ProviderService {
         Ok(())
     }
 
-    /// Switch to a provider
+    /// Switch to a provider.
     ///
+    /// Thin wrapper over [`Self::switch_inner`] whose only job is to record the
+    /// switch source on **every** successful path — the early returns for Pi, OMO,
+    /// Claude Desktop and proxy takeover all perform a real switch, and spec decision
+    /// D2's "manual wins within the window" guarantee only holds if the ledger sees
+    /// them too.
+    pub fn switch(
+        state: &AppState,
+        app_type: AppType,
+        id: &str,
+        source: crate::schedule_rules::SwitchSource,
+    ) -> Result<SwitchResult, AppError> {
+        let result = Self::switch_inner(state, app_type.clone(), id)?;
+        Self::record_switch_source(state, &app_type, source);
+        Ok(result)
+    }
+
+    /// Persist the switch-source audit row for a switch that actually happened.
+    ///
+    /// Best-effort: a ledger write failure must not fail a switch whose live config
+    /// and `is_current` are already committed.
+    fn record_switch_source(
+        state: &AppState,
+        app_type: &AppType,
+        source: crate::schedule_rules::SwitchSource,
+    ) {
+        use crate::schedule_rules::SwitchSource;
+        // Initial and Deeplink deliberately do not pin the scheduler (spec 6.3).
+        let now = chrono::Local::now().to_rfc3339();
+        let written = match source {
+            SwitchSource::Manual => state
+                .db
+                .update_app_schedule_state_manual(app_type.as_str(), &now),
+            SwitchSource::Scheduled => state
+                .db
+                .update_app_schedule_state_scheduled(app_type.as_str(), &now),
+            SwitchSource::Initial | SwitchSource::Deeplink => return,
+        };
+        if let Err(e) = written {
+            log::warn!(
+                "update schedule state for {} (source {source:?}) failed: {e}",
+                app_type.as_str()
+            );
+        }
+    }
+
     /// Switch flow:
     /// 1. Validate target provider exists
     /// 2. Check if proxy takeover mode is active AND proxy server is running
@@ -5077,7 +5240,11 @@ impl ProviderService {
     ///    c. Update database is_current (as default for new devices)
     ///    d. Write target provider config to live files
     ///    e. Sync MCP configuration
-    pub fn switch(state: &AppState, app_type: AppType, id: &str) -> Result<SwitchResult, AppError> {
+    fn switch_inner(
+        state: &AppState,
+        app_type: AppType,
+        id: &str,
+    ) -> Result<SwitchResult, AppError> {
         if app_type == AppType::Pi {
             return pi::enable(state, id);
         }
@@ -6827,15 +6994,19 @@ impl ProviderService {
         if let Some(p) = provider {
             if p.apps.claude {
                 let claude_id = format!("universal-claude-{id}");
-                let _ = state.db.delete_provider("claude", &claude_id);
+                let _ = state
+                    .db
+                    .delete_provider_cascading_rules("claude", &claude_id);
             }
             if p.apps.codex {
                 let codex_id = format!("universal-codex-{id}");
-                let _ = state.db.delete_provider("codex", &codex_id);
+                let _ = state.db.delete_provider_cascading_rules("codex", &codex_id);
             }
             if p.apps.gemini {
                 let gemini_id = format!("universal-gemini-{id}");
-                let _ = state.db.delete_provider("gemini", &gemini_id);
+                let _ = state
+                    .db
+                    .delete_provider_cascading_rules("gemini", &gemini_id);
             }
         }
 
@@ -6872,7 +7043,9 @@ impl ProviderService {
         } else {
             // 如果禁用了 Claude，删除对应的子供应商
             let claude_id = format!("universal-claude-{id}");
-            let _ = state.db.delete_provider("claude", &claude_id);
+            let _ = state
+                .db
+                .delete_provider_cascading_rules("claude", &claude_id);
         }
 
         // 同步到 Codex
@@ -6892,7 +7065,7 @@ impl ProviderService {
             );
         } else {
             let codex_id = format!("universal-codex-{id}");
-            let _ = state.db.delete_provider("codex", &codex_id);
+            let _ = state.db.delete_provider_cascading_rules("codex", &codex_id);
         }
 
         // 同步到 Gemini
@@ -6912,7 +7085,9 @@ impl ProviderService {
             );
         } else {
             let gemini_id = format!("universal-gemini-{id}");
-            let _ = state.db.delete_provider("gemini", &gemini_id);
+            let _ = state
+                .db
+                .delete_provider_cascading_rules("gemini", &gemini_id);
         }
 
         if live_failures.is_empty() {

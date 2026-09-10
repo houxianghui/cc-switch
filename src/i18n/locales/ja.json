@@ -270,6 +270,7 @@
     "updateFailed": "プロバイダーの更新に失敗しました: {{error}}",
     "deleteSuccess": "プロバイダーを削除しました",
     "deleteFailed": "プロバイダーの削除に失敗しました: {{error}}",
+    "scheduleRulesCascadeDeleted": "このプロバイダーを参照していたスケジュールルール {{count}} 件を削除しました",
     "settingsSaved": "設定を保存しました",
     "settingsSaveFailed": "設定の保存に失敗しました: {{error}}",
     "proxyRequiredForSwitch": "このプロバイダーは{{reason}}、ルーティングサービスが必要です。先にルーティングを起動してください",
@@ -3261,5 +3262,66 @@
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
+  },
+  "nav": {
+    "schedules": "スケジュール"
+  },
+  "schedule": {
+    "title": "スケジュール",
+    "addRule": "ルールを追加",
+    "editRule": "ルールを編集",
+    "app": "アプリ",
+    "provider": "プロバイダー",
+    "priority": "優先度",
+    "priorityHint": "2 つのルールが同じ時刻を含む場合は数値が大きい方が優先されます。同じ数値なら最後に編集したルールが優先されます。",
+    "enabled": "有効",
+    "note": "メモ（任意）",
+    "windows": "時間帯",
+    "addWindow": "時間帯を追加",
+    "removeWindow": "削除",
+    "dow": {
+      "mon": "月",
+      "tue": "火",
+      "wed": "水",
+      "thu": "木",
+      "fri": "金",
+      "sat": "土",
+      "sun": "日"
+    },
+    "summary": {
+      "daily": "毎日 {{start}}-{{end}}",
+      "weekdays": "月-金 {{start}}-{{end}}",
+      "weekends": "土日 {{start}}-{{end}}",
+      "complex": "{{n}} 件の時間帯"
+    },
+    "history": {
+      "title": "切り替え履歴",
+      "empty": "スケジュール切り替えはまだ実行されていません",
+      "loadFailed": "切り替え履歴の読み込みに失敗しました",
+      "reason": {
+        "rule": "ルール",
+        "fallback": "フォールバック"
+      }
+    },
+    "health": {
+      "degraded": "スケジューラ異常（連続 {{n}} 回失敗）"
+    },
+    "nextSwitch": "次回：{{provider}}（{{rel}}後）",
+    "rel": {
+      "minutes": "{{n}} 分",
+      "hours": "{{n}} 時間",
+      "days": "{{n}} 日"
+    },
+    "priorityBadge": "優先度 {{n}}",
+    "empty": "スケジュールルールがまだありません。「ルールを追加」をクリックすると、指定した時間帯に CC Switch がプロバイダーを自動で切り替えます。",
+    "error": {
+      "crossMidnight": "v1 では日跨ぎ時間帯はサポートされていません",
+      "emptyWindows": "時間帯を1つ以上指定してください",
+      "emptyDow": "曜日を1つ以上選択してください",
+      "providerMissing": "プロバイダーは存在しません",
+      "providerRequired": "プロバイダーを選択してください"
+    },
+    "runNow": "今すぐ実行",
+    "runNowResult": "発火 {{fired}}、スキップ {{skipped}}"
   }
 }

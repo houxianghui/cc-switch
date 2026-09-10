@@ -270,6 +270,7 @@
     "updateFailed": "Failed to update provider: {{error}}",
     "deleteSuccess": "Provider deleted",
     "deleteFailed": "Failed to delete provider: {{error}}",
+    "scheduleRulesCascadeDeleted": "Deleted {{count}} schedule rule(s) that referenced this provider",
     "settingsSaved": "Settings saved",
     "settingsSaveFailed": "Failed to save settings: {{error}}",
     "proxyRequiredForSwitch": "This provider {{reason}}, requires the routing service to work properly. Start routing first.",
@@ -3261,5 +3262,66 @@
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
+  },
+  "nav": {
+    "schedules": "Schedules"
+  },
+  "schedule": {
+    "title": "Schedules",
+    "addRule": "Add rule",
+    "editRule": "Edit rule",
+    "app": "App",
+    "provider": "Provider",
+    "priority": "Priority",
+    "priorityHint": "When two rules cover the same moment, the higher number wins; on a tie the most recently edited rule wins.",
+    "enabled": "Enabled",
+    "note": "Note (optional)",
+    "windows": "Time windows",
+    "addWindow": "Add window",
+    "removeWindow": "Remove",
+    "dow": {
+      "mon": "Mon",
+      "tue": "Tue",
+      "wed": "Wed",
+      "thu": "Thu",
+      "fri": "Fri",
+      "sat": "Sat",
+      "sun": "Sun"
+    },
+    "summary": {
+      "daily": "Daily {{start}}-{{end}}",
+      "weekdays": "Mon-Fri {{start}}-{{end}}",
+      "weekends": "Sat-Sun {{start}}-{{end}}",
+      "complex": "{{n}} windows"
+    },
+    "history": {
+      "title": "Switch history",
+      "empty": "No scheduled switch has fired yet",
+      "loadFailed": "Failed to load switch history",
+      "reason": {
+        "rule": "Rule",
+        "fallback": "Fallback"
+      }
+    },
+    "health": {
+      "degraded": "Scheduler degraded ({{n}} failures)"
+    },
+    "nextSwitch": "Next: {{provider}} in {{rel}}",
+    "rel": {
+      "minutes": "{{n}}m",
+      "hours": "{{n}}h",
+      "days": "{{n}}d"
+    },
+    "priorityBadge": "Priority {{n}}",
+    "empty": "No schedule rules yet. Click “Add rule” to have CC Switch switch providers for you at set times.",
+    "error": {
+      "crossMidnight": "Cross-midnight windows are not supported in v1",
+      "emptyWindows": "At least one window is required",
+      "emptyDow": "Pick at least one day",
+      "providerMissing": "Provider no longer exists",
+      "providerRequired": "Pick a provider"
+    },
+    "runNow": "Run now",
+    "runNowResult": "Fired {{fired}}, skipped {{skipped}}"
   }
 }

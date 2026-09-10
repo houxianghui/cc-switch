@@ -197,10 +197,22 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
     );
 
     // ---- 改动全部四类配置（走真实切换路径）----
-    ProviderService::switch(&state, AppType::Claude, "p2").expect("switch to p2");
+    ProviderService::switch(
+        &state,
+        AppType::Claude,
+        "p2",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch to p2");
     // Desktop 现在有自己的项目分组；Claude 分组 apply 不应再影响 Desktop
     #[cfg(any(target_os = "macos", windows))]
-    ProviderService::switch(&state, AppType::ClaudeDesktop, "d2").expect("switch desktop to d2");
+    ProviderService::switch(
+        &state,
+        AppType::ClaudeDesktop,
+        "d2",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch desktop to d2");
     McpService::toggle_app(&state, "m1", AppType::Claude, false).expect("disable m1");
     McpService::toggle_app(&state, "m2", AppType::Claude, true).expect("enable m2");
     SkillService::toggle_app(&state.db, "local:test-skill", &AppType::Claude, false)
@@ -544,7 +556,13 @@ fn switching_profile_autosaves_previous_profile_state() {
     assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
 
     // ---- 在 A 下改到状态 Y（p2 / m2 / pr2），然后据此创建 Project B ----
-    ProviderService::switch(&state, AppType::Claude, "p2").expect("switch to p2");
+    ProviderService::switch(
+        &state,
+        AppType::Claude,
+        "p2",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch to p2");
     McpService::toggle_app(&state, "m1", AppType::Claude, false).expect("disable m1");
     McpService::toggle_app(&state, "m2", AppType::Claude, true).expect("enable m2");
     PromptService::enable_prompt(&state, AppType::Claude, "pr2").expect("enable pr2");
@@ -589,7 +607,13 @@ fn switching_profile_autosaves_previous_profile_state() {
     assert_eq!(payload_a.prompts.claude.as_deref(), Some("pr2"));
 
     // ---- 在 B 下改回状态 X，再切换回 A ----
-    ProviderService::switch(&state, AppType::Claude, "p1").expect("switch to p1");
+    ProviderService::switch(
+        &state,
+        AppType::Claude,
+        "p1",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch to p1");
     McpService::toggle_app(&state, "m1", AppType::Claude, true).expect("enable m1");
     McpService::toggle_app(&state, "m2", AppType::Claude, false).expect("disable m2");
     PromptService::enable_prompt(&state, AppType::Claude, "pr1").expect("enable pr1");
@@ -678,7 +702,13 @@ fn profile_switch_auto_disables_takeover_before_apply() {
         .expect("save custom2 provider");
 
     // 初始状态：custom1 + 代理接管
-    ProviderService::switch(&state, AppType::Claude, "custom1").expect("switch to custom1");
+    ProviderService::switch(
+        &state,
+        AppType::Claude,
+        "custom1",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch to custom1");
     let rt = tokio::runtime::Runtime::new().expect("create tokio runtime");
     rt.block_on(state.proxy_service.set_takeover_for_app("claude", true))
         .expect("enable claude takeover");
@@ -786,7 +816,13 @@ fn claude_desktop_profile_scope_is_independent() {
     assert_eq!(payload.providers.codex, None, "codex slot untouched");
 
     // 切到 d2
-    ProviderService::switch(&state, AppType::ClaudeDesktop, "d2").expect("switch desktop to d2");
+    ProviderService::switch(
+        &state,
+        AppType::ClaudeDesktop,
+        "d2",
+        cc_switch_lib::SwitchSource::Manual,
+    )
+    .expect("switch desktop to d2");
 
     // 应用 Desktop 项目：恢复 d1
     let (warnings, _) = ProfileService::apply(&state, &project.id, ProfileScope::ClaudeDesktop)

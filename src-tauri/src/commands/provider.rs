@@ -7,7 +7,8 @@ use crate::commands::xai_oauth::XaiOAuthState;
 use crate::error::AppError;
 use crate::provider::{ClaudeDesktopMode, Provider};
 use crate::services::{
-    EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService, SwitchResult,
+    DeleteOutcome, EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService,
+    SwitchResult,
 };
 use crate::store::AppState;
 use std::str::FromStr;
@@ -79,11 +80,9 @@ pub fn delete_provider(
     state: State<'_, AppState>,
     app: String,
     id: String,
-) -> Result<bool, String> {
+) -> Result<DeleteOutcome, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::delete(state.inner(), app_type, &id)
-        .map(|_| true)
-        .map_err(|e| e.to_string())
+    ProviderService::delete(state.inner(), app_type, &id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -103,7 +102,12 @@ fn switch_provider_internal(
     app_type: AppType,
     id: &str,
 ) -> Result<SwitchResult, AppError> {
-    ProviderService::switch(state, app_type, id)
+    ProviderService::switch(
+        state,
+        app_type,
+        id,
+        crate::schedule_rules::SwitchSource::Manual,
+    )
 }
 
 #[cfg_attr(not(feature = "test-hooks"), doc(hidden))]

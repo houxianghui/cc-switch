@@ -381,7 +381,12 @@ impl ProfileService {
                 } else {
                     let current = crate::settings::get_effective_current_provider(&state.db, app)?;
                     if current.as_deref() != Some(target_pid.as_str()) {
-                        match ProviderService::switch(state, app.clone(), target_pid) {
+                        match ProviderService::switch(
+                            state,
+                            app.clone(),
+                            target_pid,
+                            crate::schedule_rules::SwitchSource::Manual,
+                        ) {
                             Ok(result) => warnings.extend(result.warnings),
                             Err(e) => warnings.push(format!(
                                 "[{app_str}] switch provider '{target_pid}' failed: {e}"

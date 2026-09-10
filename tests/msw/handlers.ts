@@ -1,20 +1,31 @@
 import { http, HttpResponse } from "msw";
 import type { AppId } from "@/lib/api/types";
 import { MODELS_DEV_API_URL } from "@/lib/modelsDevPricing";
+import type {
+  NewScheduleRuleDto,
+  ScheduleRulePatchDto,
+} from "@/lib/api/schedule";
 import type { McpServer, Provider, Settings } from "@/types";
 import {
   addProvider,
+  createScheduleRule,
   deleteProvider,
+  deleteScheduleRule,
   deleteSession,
   getCurrentProviderId,
   getLiveProviderIds,
+  getScheduleEvaluation,
+  getScheduleHealthState,
   getSessionMessages,
   getProviders,
   listProviders,
+  listScheduleRules,
+  listSwitchLogState,
   listSessions,
   resetProviderState,
   setCurrentProviderId,
   updateProvider,
+  updateScheduleRule,
   updateSortOrder,
   getSettings,
   setSettings,
@@ -117,8 +128,8 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/delete_provider`, async ({ request }) => {
     const { id, app } = await withJson<{ id: string; app: AppId }>(request);
-    deleteProvider(app, id);
-    return success(true);
+    const cascadedRuleCount = deleteProvider(app, id);
+    return success({ cascaded_rule_count: cascadedRuleCount });
   }),
 
   http.post(`${TAURI_ENDPOINT}/remove_provider_from_live_config`, () =>
@@ -398,4 +409,56 @@ export const handlers = [
   ),
   http.post(`${TAURI_ENDPOINT}/reset_circuit_breaker`, () => success(true)),
   http.post(`${TAURI_ENDPOINT}/get_circuit_breaker_stats`, () => success(null)),
+
+  // Schedule APIs
+  http.post(`${TAURI_ENDPOINT}/list_schedule_rules`, async ({ request }) => {
+    const { app } = await withJson<{ app?: AppId }>(request);
+    return success(listScheduleRules(app));
+  }),
+
+  http.post(`${TAURI_ENDPOINT}/create_schedule_rule`, async ({ request }) => {
+    const { newRule } = await withJson<{ newRule: NewScheduleRuleDto }>(
+      request,
+    );
+    return success(createScheduleRule(newRule));
+  }),
+
+  http.post(`${TAURI_ENDPOINT}/update_schedule_rule`, async ({ request }) => {
+    const { id, patch } = await withJson<{
+      id: string;
+      patch: ScheduleRulePatchDto;
+    }>(request);
+    const updated = updateScheduleRule(id, patch);
+    if (!updated) {
+      return HttpResponse.json(`Rule not found: ${id}`, { status: 404 });
+    }
+    return success(updated);
+  }),
+
+  http.post(`${TAURI_ENDPOINT}/delete_schedule_rule`, async ({ request }) => {
+    const { id } = await withJson<{ id: string }>(request);
+    deleteScheduleRule(id);
+    return success(null);
+  }),
+
+  http.post(`${TAURI_ENDPOINT}/evaluate_schedule_now`, () =>
+    success(getScheduleEvaluation()),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/get_next_scheduled_switch`, () => success(null)),
+
+  http.post(`${TAURI_ENDPOINT}/get_schedule_health`, () =>
+    success(getScheduleHealthState()),
+  ),
+
+  http.post(
+    `${TAURI_ENDPOINT}/list_schedule_switch_log`,
+    async ({ request }) => {
+      const { app, limit } = await withJson<{
+        app?: AppId;
+        limit?: number;
+      }>(request);
+      return success(listSwitchLogState(app, limit ?? 50));
+    },
+  ),
 ];

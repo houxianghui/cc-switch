@@ -8997,8 +8997,13 @@ requires_openai_auth = true
         .await
         .expect("seed restored backup");
 
-        crate::services::provider::ProviderService::switch(&state, AppType::Codex, "b")
-            .expect("provider switch to provider b");
+        crate::services::provider::ProviderService::switch(
+            &state,
+            AppType::Codex,
+            "b",
+            crate::schedule_rules::SwitchSource::Manual,
+        )
+        .expect("provider switch to provider b");
         state.proxy_service.stop().await.expect("stop proxy server");
 
         let catalog_path = crate::codex_config::get_codex_model_catalog_path();
@@ -9139,8 +9144,13 @@ requires_openai_auth = true
         }
         std::fs::create_dir_all(&catalog_path).expect("turn catalog path into directory");
 
-        let err = crate::services::provider::ProviderService::switch(&state, AppType::Codex, "b")
-            .expect_err("provider switch should fail when catalog cannot be written");
+        let err = crate::services::provider::ProviderService::switch(
+            &state,
+            AppType::Codex,
+            "b",
+            crate::schedule_rules::SwitchSource::Manual,
+        )
+        .expect_err("provider switch should fail when catalog cannot be written");
         state.proxy_service.stop().await.expect("stop proxy server");
 
         let message = err.to_string();
@@ -9227,8 +9237,13 @@ requires_openai_auth = true
             .expect("install failure trigger");
         }
 
-        let error = crate::services::provider::ProviderService::switch(&state, AppType::Codex, "b")
-            .expect_err("database commit should fail");
+        let error = crate::services::provider::ProviderService::switch(
+            &state,
+            AppType::Codex,
+            "b",
+            crate::schedule_rules::SwitchSource::Manual,
+        )
+        .expect_err("database commit should fail");
         state.proxy_service.stop().await.expect("stop proxy server");
 
         assert!(error

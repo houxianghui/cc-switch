@@ -270,6 +270,7 @@
     "updateFailed": "更新供应商失败：{{error}}",
     "deleteSuccess": "供应商已删除",
     "deleteFailed": "删除供应商失败：{{error}}",
+    "scheduleRulesCascadeDeleted": "已删除 {{count}} 条引用该供应商的定时规则",
     "settingsSaved": "设置已保存",
     "settingsSaveFailed": "保存设置失败：{{error}}",
     "proxyRequiredForSwitch": "此供应商{{reason}}，需要路由服务才能正常使用，请先启动路由",
@@ -3261,5 +3262,66 @@
     "expiredHint": "请运行 {{tool}} 命令刷新登录",
     "queryFailed": "查询失败",
     "refresh": "刷新"
+  },
+  "nav": {
+    "schedules": "定时切换"
+  },
+  "schedule": {
+    "title": "定时切换",
+    "addRule": "新建规则",
+    "editRule": "编辑规则",
+    "app": "应用",
+    "provider": "供应商",
+    "priority": "优先级",
+    "priorityHint": "两条规则同时覆盖某一时刻时，数字大的胜出；数字相同则以最近修改的规则为准。",
+    "enabled": "启用",
+    "note": "备注（可选）",
+    "windows": "时间窗口",
+    "addWindow": "添加窗口",
+    "removeWindow": "移除",
+    "dow": {
+      "mon": "一",
+      "tue": "二",
+      "wed": "三",
+      "thu": "四",
+      "fri": "五",
+      "sat": "六",
+      "sun": "日"
+    },
+    "summary": {
+      "daily": "每天 {{start}}-{{end}}",
+      "weekdays": "周一至周五 {{start}}-{{end}}",
+      "weekends": "周六、周日 {{start}}-{{end}}",
+      "complex": "{{n}} 个窗口"
+    },
+    "history": {
+      "title": "切换历史",
+      "empty": "还没有发生过定时切换",
+      "loadFailed": "加载切换历史失败",
+      "reason": {
+        "rule": "规则",
+        "fallback": "兜底"
+      }
+    },
+    "health": {
+      "degraded": "调度器异常（连续失败 {{n}} 次）"
+    },
+    "nextSwitch": "下次切换：{{provider}}，{{rel}}后",
+    "rel": {
+      "minutes": "{{n}} 分钟",
+      "hours": "{{n}} 小时",
+      "days": "{{n}} 天"
+    },
+    "priorityBadge": "优先级 {{n}}",
+    "empty": "还没有定时规则。点击「新建规则」，让 CC Switch 在指定时段自动为你切换供应商。",
+    "error": {
+      "crossMidnight": "v1 不支持跨午夜时间窗口",
+      "emptyWindows": "至少需要一个时间窗口",
+      "emptyDow": "请至少选择一天",
+      "providerMissing": "供应商已不存在",
+      "providerRequired": "请选择供应商"
+    },
+    "runNow": "立即执行",
+    "runNowResult": "触发 {{fired}}，跳过 {{skipped}}"
   }
 }

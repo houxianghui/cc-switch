@@ -1,5 +1,13 @@
 import type { AppId } from "@/lib/api/types";
 import type {
+  EvaluationReportDto,
+  NewScheduleRuleDto,
+  ScheduleHealthDto,
+  SwitchLogEntryDto,
+  ScheduleRuleDto,
+  ScheduleRulePatchDto,
+} from "@/lib/api/schedule";
+import type {
   McpServer,
   Provider,
   SessionMessage,
@@ -323,12 +331,13 @@ export const updateProvider = (appType: AppId, provider: Provider) => {
 };
 
 export const deleteProvider = (appType: AppId, providerId: string) => {
-  if (!providers[appType]) return;
+  if (!providers[appType]) return 0;
   delete providers[appType][providerId];
   if (current[appType] === providerId) {
     const fallback = Object.keys(providers[appType])[0] ?? "";
     current[appType] = fallback;
   }
+  return deleteScheduleRulesForProvider(appType, providerId);
 };
 
 export const updateSortOrder = (
@@ -438,4 +447,118 @@ export const setSessionFixtures = (
     string,
     SessionMessage[]
   >;
+};
+
+const SCHEDULE_EPOCH_MS = Date.parse("2026-09-08T00:00:00.000Z");
+
+const createDefaultScheduleRules = (): ScheduleRuleDto[] => [];
+
+const createDefaultScheduleHealth = (): ScheduleHealthDto => ({
+  last_tick_at: null,
+  last_tick_error: null,
+  consecutive_failures: 0,
+});
+
+const createDefaultScheduleEvaluation = (): EvaluationReportDto => ({
+  apps: [],
+});
+
+const createDefaultSwitchLog = (): SwitchLogEntryDto[] => [];
+
+let scheduleRules: ScheduleRuleDto[] = createDefaultScheduleRules();
+let scheduleHealth: ScheduleHealthDto = createDefaultScheduleHealth();
+let switchLog: SwitchLogEntryDto[] = createDefaultSwitchLog();
+let scheduleEvaluation: EvaluationReportDto = createDefaultScheduleEvaluation();
+let scheduleRuleCounter = 0;
+let scheduleClockTicks = 0;
+
+const nextScheduleTimestamp = () => {
+  scheduleClockTicks += 1;
+  return new Date(SCHEDULE_EPOCH_MS + scheduleClockTicks * 1000).toISOString();
+};
+
+export const resetScheduleState = () => {
+  scheduleRules = createDefaultScheduleRules();
+  scheduleHealth = createDefaultScheduleHealth();
+  switchLog = createDefaultSwitchLog();
+  scheduleEvaluation = createDefaultScheduleEvaluation();
+  scheduleRuleCounter = 0;
+  scheduleClockTicks = 0;
+};
+
+export const listScheduleRules = (app?: AppId) =>
+  deepClone(
+    app ? scheduleRules.filter((rule) => rule.app === app) : scheduleRules,
+  ) as ScheduleRuleDto[];
+
+export const createScheduleRule = (
+  newRule: NewScheduleRuleDto,
+): ScheduleRuleDto => {
+  scheduleRuleCounter += 1;
+  const timestamp = nextScheduleTimestamp();
+  const rule: ScheduleRuleDto = {
+    ...(deepClone(newRule) as NewScheduleRuleDto),
+    id: `rule-${scheduleRuleCounter}`,
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+  scheduleRules = [...scheduleRules, rule];
+  return deepClone(rule) as ScheduleRuleDto;
+};
+
+export const updateScheduleRule = (
+  id: string,
+  patch: ScheduleRulePatchDto,
+): ScheduleRuleDto | null => {
+  const existing = scheduleRules.find((rule) => rule.id === id);
+  if (!existing) return null;
+  const updated: ScheduleRuleDto = {
+    ...existing,
+    ...(deepClone(patch) as ScheduleRulePatchDto),
+    updated_at: nextScheduleTimestamp(),
+  };
+  scheduleRules = scheduleRules.map((rule) =>
+    rule.id === id ? updated : rule,
+  );
+  return deepClone(updated) as ScheduleRuleDto;
+};
+
+export const deleteScheduleRule = (id: string) => {
+  scheduleRules = scheduleRules.filter((rule) => rule.id !== id);
+};
+
+/** Mirrors the backend's `DELETE FROM schedule_rules WHERE app = ? AND provider_id = ?`. */
+const deleteScheduleRulesForProvider = (
+  app: AppId,
+  providerId: string,
+): number => {
+  const remaining = scheduleRules.filter(
+    (rule) => !(rule.app === app && rule.provider_id === providerId),
+  );
+  const removed = scheduleRules.length - remaining.length;
+  scheduleRules = remaining;
+  return removed;
+};
+
+export const listSwitchLogState = (app: AppId | undefined, limit: number) =>
+  deepClone(
+    switchLog.filter((e) => !app || e.app === app).slice(0, limit),
+  ) as SwitchLogEntryDto[];
+
+export const setSwitchLogState = (entries: SwitchLogEntryDto[]) => {
+  switchLog = [...entries];
+};
+
+export const getScheduleHealthState = () =>
+  deepClone(scheduleHealth) as ScheduleHealthDto;
+
+export const setScheduleHealthState = (patch: Partial<ScheduleHealthDto>) => {
+  scheduleHealth = { ...scheduleHealth, ...patch };
+};
+
+export const getScheduleEvaluation = () =>
+  deepClone(scheduleEvaluation) as EvaluationReportDto;
+
+export const setScheduleEvaluation = (report: EvaluationReportDto) => {
+  scheduleEvaluation = deepClone(report) as EvaluationReportDto;
 };

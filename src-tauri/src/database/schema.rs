@@ -430,6 +430,71 @@ impl Database {
             [],
         );
 
+        // 20. Scheduled Provider Switching (v19)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS schedule_rules (
+                id TEXT PRIMARY KEY,
+                app TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                windows_json TEXT NOT NULL,
+                priority INTEGER NOT NULL DEFAULT 0,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                note TEXT
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_schedule_rules_app_enabled
+             ON schedule_rules(app, enabled)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS app_schedule_state (
+                app TEXT PRIMARY KEY,
+                last_window_start_at TEXT,
+                last_manual_switch_at TEXT,
+                last_scheduled_switch_at TEXT,
+                updated_at TEXT NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS app_fallback_providers (
+                app TEXT PRIMARY KEY,
+                fallback_provider_id TEXT,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (app, fallback_provider_id)
+                    REFERENCES providers(app_type, id) ON DELETE SET NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS schedule_switch_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                app TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                fired_at TEXT NOT NULL,
+                reason TEXT NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_schedule_switch_log_app_fired
+             ON schedule_switch_log(app, fired_at DESC)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         Ok(())
     }
 
@@ -548,6 +613,11 @@ impl Database {
                         log::info!("迁移数据库从 v17 到 v18（会话日志字节游标列）");
                         Self::migrate_v17_to_v18(conn)?;
                         Self::set_user_version(conn, 18)?;
+                    }
+                    18 => {
+                        log::info!("迁移数据库从 v18 到 v19（定时切换）");
+                        Self::migrate_v18_to_v19(conn)?;
+                        Self::set_user_version(conn, 19)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1596,6 +1666,54 @@ impl Database {
                 "INTEGER",
             )?;
         }
+        Ok(())
+    }
+
+    /// v18 -> v19: scheduled provider switching tables.
+    ///
+    /// All four tables use CREATE TABLE IF NOT EXISTS so re-running is a no-op.
+    /// create_tables_on_conn already runs the same DDL on fresh databases, so
+    /// calling this twice in a row is safe and returns Ok(()).
+    fn migrate_v18_to_v19(conn: &Connection) -> Result<(), AppError> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS schedule_rules (
+                id TEXT PRIMARY KEY,
+                app TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                windows_json TEXT NOT NULL,
+                priority INTEGER NOT NULL DEFAULT 0,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                note TEXT
+             );
+             CREATE INDEX IF NOT EXISTS idx_schedule_rules_app_enabled
+                 ON schedule_rules(app, enabled);
+             CREATE TABLE IF NOT EXISTS app_schedule_state (
+                 app TEXT PRIMARY KEY,
+                 last_window_start_at TEXT,
+                 last_manual_switch_at TEXT,
+                 last_scheduled_switch_at TEXT,
+                 updated_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS app_fallback_providers (
+                 app TEXT PRIMARY KEY,
+                 fallback_provider_id TEXT,
+                 updated_at TEXT NOT NULL,
+                 FOREIGN KEY (app, fallback_provider_id)
+                     REFERENCES providers(app_type, id) ON DELETE SET NULL
+             );
+             CREATE TABLE IF NOT EXISTS schedule_switch_log (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 app TEXT NOT NULL,
+                 provider_id TEXT NOT NULL,
+                 fired_at TEXT NOT NULL,
+                 reason TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_schedule_switch_log_app_fired
+                 ON schedule_switch_log(app, fired_at DESC);",
+        )
+        .map_err(|e| AppError::Database(format!("v18 -> v19 迁移失败: {e}")))?;
         Ok(())
     }
 
@@ -3709,6 +3827,29 @@ mod tests {
         )?;
         assert_eq!(byte_offset, None, "存量行的字节游标必须为 NULL");
         assert_eq!(fingerprint, None, "存量行的尾部指纹必须为 NULL");
+        Ok(())
+    }
+
+    /// v18 → v19 迁移在已建好表的库上必须是幂等 no-op（对应 AC10）。
+    #[test]
+    fn migrate_v18_to_v19_is_idempotent() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        // create_tables_on_conn 已在 Database::memory() 期间跑过，v19 四张表已建好。
+        // 再跑一次迁移：必须仍是 Ok(()).
+        {
+            let conn = lock_conn!(db.conn);
+            Database::migrate_v18_to_v19(&conn)?;
+        }
+        // 校验四张表都存在
+        let conn = lock_conn!(db.conn);
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type='table' AND name IN
+               ('schedule_rules','app_schedule_state','app_fallback_providers','schedule_switch_log')",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(count, 4, "all four v19 tables must exist");
         Ok(())
     }
 }

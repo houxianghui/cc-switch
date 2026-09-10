@@ -30,6 +30,7 @@ mod prompt;
 mod prompt_files;
 mod provider;
 mod proxy;
+mod schedule_rules;
 mod services;
 mod session_manager;
 mod settings;
@@ -60,6 +61,7 @@ pub use mcp::{
 };
 pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
+pub use schedule_rules::SwitchSource;
 pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService},
     provider::reapply_current_codex_official_live,
@@ -1132,6 +1134,78 @@ pub fn run() {
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
+            // Start the schedule evaluation service (60s tick, immediate startup evaluation).
+            // The switch closure captures an AppHandle and looks up AppState on every call
+            // so the service always uses the most recently managed state.
+            {
+                use crate::services::schedule::ScheduleServiceState as SchedState;
+                use crate::services::SwitchFn;
+
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let switch_app = app_handle.clone();
+                    let switch_fn: SwitchFn =
+                        std::sync::Arc::new(move |app_type, provider, source| {
+                            let switch_app = switch_app.clone();
+                            Box::pin(async move {
+                                // ProviderService::switch takes the switch lock with
+                                // futures::executor::block_on, which panics on a runtime
+                                // thread — it must stay on a blocking thread (see the note
+                                // on commands::profile::apply_profile).
+                                tauri::async_runtime::spawn_blocking(move || {
+                                    let st = switch_app.try_state::<AppState>().ok_or_else(|| {
+                                        AppError::localized(
+                                            "schedule.app_state_unavailable",
+                                            "应用状态不可用",
+                                            "App state is unavailable",
+                                        )
+                                    })?;
+                                    let app_type_str = app_type.as_str().to_string();
+                                    crate::services::ProviderService::switch(
+                                        st.inner(),
+                                        app_type,
+                                        &provider,
+                                        source,
+                                    )?;
+                                    // A scheduled switch has to announce itself the same way
+                                    // a tray click does. Rebuild rather than soft-update: the
+                                    // checkmarks live on CheckMenuItems that
+                                    // `update_tray_usage_labels` cannot reach, so the submenu
+                                    // would keep ticking the previous provider even after a
+                                    // hover refreshed its title.
+                                    crate::tray::refresh_tray_menu(&switch_app);
+                                    if let Err(e) = switch_app.emit(
+                                        "provider-switched",
+                                        serde_json::json!({
+                                            "appType": app_type_str,
+                                            "providerId": provider,
+                                        }),
+                                    ) {
+                                        log::error!(
+                                            "[schedule] emitting provider-switched failed: {e}"
+                                        );
+                                    }
+                                    Ok(())
+                                })
+                                .await
+                                .map_err(|e| {
+                                    AppError::localized(
+                                        "schedule.switch_task_failed",
+                                        format!("定时切换任务执行失败: {e}"),
+                                        format!("Scheduled switch task failed: {e}"),
+                                    )
+                                })?
+                            })
+                        });
+                    let db = app_handle.state::<AppState>().db.clone();
+                    let svc = crate::services::ScheduleService::new(db, switch_fn);
+                    app_handle.manage(SchedState(svc.clone()));
+                    if let Err(e) = svc.start().await {
+                        log::error!("[schedule] start failed: {e}");
+                    }
+                });
+            }
+
             // 初始化 SkillService
             let skill_service = SkillService::new();
             app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
@@ -1712,6 +1786,17 @@ pub fn run() {
             commands::enter_lightweight_mode,
             commands::exit_lightweight_mode,
             commands::is_lightweight_mode,
+            // Schedule management (v3.21.0+)
+            commands::list_schedule_rules,
+            commands::create_schedule_rule,
+            commands::update_schedule_rule,
+            commands::delete_schedule_rule,
+            commands::get_fallback_provider,
+            commands::set_fallback_provider,
+            commands::evaluate_schedule_now,
+            commands::get_next_scheduled_switch,
+            commands::get_schedule_health,
+            commands::list_schedule_switch_log,
         ]);
 
     let app = builder

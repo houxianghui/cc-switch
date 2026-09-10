@@ -148,29 +148,35 @@ pub(super) fn update(
     Ok(true)
 }
 
-pub(super) fn delete(state: &AppState, id: &str) -> Result<(), AppError> {
+pub(super) fn delete(state: &AppState, id: &str) -> Result<usize, AppError> {
     let app_type = AppType::Pi;
     let _guard =
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
     let Some(_) = state.db.get_provider_by_id(id, app_type.as_str())? else {
-        return Ok(());
+        return Ok(0);
     };
     // Delete is intentionally keyed by provider ID. Once the user confirms
     // deleting the provider itself, supported field edits do not change that
     // intent; the latest native value is retained only for rollback.
     let removed = crate::pi_config::remove_pi_provider(id)?;
 
-    if let Err(error) = state.db.delete_provider(app_type.as_str(), id) {
-        if let Some(removed) = removed.as_ref() {
-            if let Err(rollback) = crate::pi_config::restore_pi_provider_if_missing(id, removed) {
-                return Err(AppError::Config(format!(
-                    "failed to delete Pi provider: {error}; native rollback failed: {rollback}"
-                )));
+    match state
+        .db
+        .delete_provider_cascading_rules(app_type.as_str(), id)
+    {
+        Ok(cascaded) => Ok(cascaded),
+        Err(error) => {
+            if let Some(removed) = removed.as_ref() {
+                if let Err(rollback) = crate::pi_config::restore_pi_provider_if_missing(id, removed)
+                {
+                    return Err(AppError::Config(format!(
+                        "failed to delete Pi provider: {error}; native rollback failed: {rollback}"
+                    )));
+                }
             }
+            Err(error)
         }
-        return Err(error);
     }
-    Ok(())
 }
 
 pub(super) fn remove(state: &AppState, id: &str) -> Result<(), AppError> {
@@ -376,7 +382,13 @@ mod tests {
         assert_eq!(meta.custom_user_agent, None);
         assert_eq!(meta.is_partner, Some(true));
 
-        ProviderService::switch(&state, AppType::Pi, "cc-switch-test").expect("enable provider");
+        ProviderService::switch(
+            &state,
+            AppType::Pi,
+            "cc-switch-test",
+            crate::schedule_rules::SwitchSource::Manual,
+        )
+        .expect("enable provider");
         assert!(crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
 
         ProviderService::remove_from_live_config(&state, AppType::Pi, "cc-switch-test")
@@ -410,7 +422,13 @@ mod tests {
             .expect("global default must not block removal");
         assert!(!crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
 
-        ProviderService::switch(&state, AppType::Pi, "cc-switch-test").expect("re-enable provider");
+        ProviderService::switch(
+            &state,
+            AppType::Pi,
+            "cc-switch-test",
+            crate::schedule_rules::SwitchSource::Manual,
+        )
+        .expect("re-enable provider");
         ProviderService::delete(&state, AppType::Pi, "cc-switch-test")
             .expect("global default must not block deletion");
         assert!(state
@@ -452,8 +470,13 @@ mod tests {
         ProviderService::list(&state, AppType::Pi).expect("import explicit provider");
         ProviderService::remove_from_live_config(&state, AppType::Pi, "anthropic")
             .expect("remove explicit provider");
-        ProviderService::switch(&state, AppType::Pi, "anthropic")
-            .expect("enable explicit provider");
+        ProviderService::switch(
+            &state,
+            AppType::Pi,
+            "anthropic",
+            crate::schedule_rules::SwitchSource::Manual,
+        )
+        .expect("enable explicit provider");
         let mut edited = state
             .db
             .get_provider_by_id("anthropic", PI_APP)
@@ -661,8 +684,13 @@ mod tests {
             minimal
         );
 
-        ProviderService::switch(&state, AppType::Pi, "cc-switch-test")
-            .expect("restore the complete native node");
+        ProviderService::switch(
+            &state,
+            AppType::Pi,
+            "cc-switch-test",
+            crate::schedule_rules::SwitchSource::Manual,
+        )
+        .expect("restore the complete native node");
         assert_eq!(
             crate::pi_config::read_pi_native_provider("cc-switch-test")
                 .expect("read restored provider"),
@@ -720,8 +748,13 @@ mod tests {
         copy.name = "Test provider copy".to_string();
 
         ProviderService::add(&state, AppType::Pi, copy, false).expect("save copied provider");
-        ProviderService::switch(&state, AppType::Pi, "cc-switch-test-copy")
-            .expect("enable copied provider");
+        ProviderService::switch(
+            &state,
+            AppType::Pi,
+            "cc-switch-test-copy",
+            crate::schedule_rules::SwitchSource::Manual,
+        )
+        .expect("enable copied provider");
         let providers = ProviderService::list(&state, AppType::Pi).expect("sync providers");
 
         assert_eq!(providers["cc-switch-test-copy"].name, "Test provider copy");
@@ -854,7 +887,13 @@ mod tests {
 
         ProviderService::remove_from_live_config(&state, AppType::Pi, "cc-switch-test")
             .expect("global selection is advisory for removal");
-        ProviderService::switch(&state, AppType::Pi, "cc-switch-test").expect("re-enable provider");
+        ProviderService::switch(
+            &state,
+            AppType::Pi,
+            "cc-switch-test",
+            crate::schedule_rules::SwitchSource::Manual,
+        )
+        .expect("re-enable provider");
         ProviderService::delete(&state, AppType::Pi, "cc-switch-test")
             .expect("global selection is advisory for deletion");
         assert!(!crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());

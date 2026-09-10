@@ -270,6 +270,7 @@
     "updateFailed": "更新供應商失敗：{{error}}",
     "deleteSuccess": "供應商已刪除",
     "deleteFailed": "刪除供應商失敗：{{error}}",
+    "scheduleRulesCascadeDeleted": "已刪除 {{count}} 條引用該供應商的定時規則",
     "settingsSaved": "設定已儲存",
     "settingsSaveFailed": "儲存設定失敗：{{error}}",
     "proxyRequiredForSwitch": "此供應商 {{reason}}，需要路由服務才能正常使用，請先啟動路由",
@@ -3262,5 +3263,66 @@
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",
     "queryFailed": "查詢失敗",
     "refresh": "重新整理"
+  },
+  "nav": {
+    "schedules": "排程切換"
+  },
+  "schedule": {
+    "title": "排程切換",
+    "addRule": "新增規則",
+    "editRule": "編輯規則",
+    "app": "應用",
+    "provider": "供應商",
+    "priority": "優先順序",
+    "priorityHint": "兩條規則同時涵蓋某一時刻時，數字大的勝出；數字相同則以最近修改的規則為準。",
+    "enabled": "啟用",
+    "note": "備註（可選）",
+    "windows": "時段",
+    "addWindow": "新增時段",
+    "removeWindow": "移除",
+    "dow": {
+      "mon": "一",
+      "tue": "二",
+      "wed": "三",
+      "thu": "四",
+      "fri": "五",
+      "sat": "六",
+      "sun": "日"
+    },
+    "summary": {
+      "daily": "每日 {{start}}-{{end}}",
+      "weekdays": "週一至週五 {{start}}-{{end}}",
+      "weekends": "週六、週日 {{start}}-{{end}}",
+      "complex": "{{n}} 個時段"
+    },
+    "history": {
+      "title": "切換歷史",
+      "empty": "尚未發生過排程切換",
+      "loadFailed": "載入切換歷史失敗",
+      "reason": {
+        "rule": "規則",
+        "fallback": "後備"
+      }
+    },
+    "health": {
+      "degraded": "排程器異常（連續失敗 {{n}} 次）"
+    },
+    "nextSwitch": "下次切換：{{provider}}，{{rel}}後",
+    "rel": {
+      "minutes": "{{n}} 分鐘",
+      "hours": "{{n}} 小時",
+      "days": "{{n}} 天"
+    },
+    "priorityBadge": "優先順序 {{n}}",
+    "empty": "還沒有排程規則。點選「新增規則」，讓 CC Switch 在指定時段自動為你切換供應商。",
+    "error": {
+      "crossMidnight": "v1 不支援跨午夜時段",
+      "emptyWindows": "至少需要一個時段",
+      "emptyDow": "請至少選擇一天",
+      "providerMissing": "供應商已不存在",
+      "providerRequired": "請選擇供應商"
+    },
+    "runNow": "立即執行",
+    "runNowResult": "觸發 {{fired}}，略過 {{skipped}}"
   }
 }

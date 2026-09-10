@@ -386,6 +386,83 @@ impl Database {
         Ok(())
     }
 
+    /// Delete a provider and every schedule rule that referenced it, atomically.
+    ///
+    /// Returns the number of schedule rules removed, for the caller's toast.
+    /// `app_fallback_providers` has `ON DELETE SET NULL`, so it needs no explicit
+    /// handling here.
+    pub fn delete_provider_cascading_rules(
+        &self,
+        app_type: &str,
+        id: &str,
+    ) -> Result<usize, AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let cascaded = tx
+            .execute(
+                "DELETE FROM schedule_rules WHERE app = ?1 AND provider_id = ?2",
+                params![app_type, id],
+            )
+            .map_err(|e| AppError::Database(format!("cascade: {e}")))?;
+
+        tx.execute(
+            "DELETE FROM providers WHERE id = ?1 AND app_type = ?2",
+            params![id, app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(cascaded)
+    }
+
+    /// Retire the old row of a **renamed** provider, moving its references onto the
+    /// new id first.
+    ///
+    /// A rename is the same provider under a new id, so its schedule rules and the
+    /// app's fallback pointer must follow it rather than be dropped. The order is
+    /// load-bearing: repointing before the delete means nothing references the old
+    /// row when it goes, so `app_fallback_providers`' `ON DELETE SET NULL` never
+    /// fires and cannot silently clear the user's fallback choice.
+    ///
+    /// The caller is expected to have inserted the new provider row already, which
+    /// is what satisfies the fallback table's foreign key at the second statement.
+    pub fn delete_provider_remapping_schedule_refs(
+        &self,
+        app_type: &str,
+        original_id: &str,
+        new_id: &str,
+    ) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        tx.execute(
+            "UPDATE schedule_rules SET provider_id = ?1 WHERE app = ?2 AND provider_id = ?3",
+            params![new_id, app_type, original_id],
+        )
+        .map_err(|e| AppError::Database(format!("remap rules: {e}")))?;
+
+        tx.execute(
+            "UPDATE app_fallback_providers SET fallback_provider_id = ?1
+             WHERE app = ?2 AND fallback_provider_id = ?3",
+            params![new_id, app_type, original_id],
+        )
+        .map_err(|e| AppError::Database(format!("remap fallback: {e}")))?;
+
+        tx.execute(
+            "DELETE FROM providers WHERE id = ?1 AND app_type = ?2",
+            params![original_id, app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     pub fn set_current_provider(&self, app_type: &str, id: &str) -> Result<(), AppError> {
         let mut conn = lock_conn!(self.conn);
         let tx = conn

@@ -17,6 +17,7 @@ pub mod proxy;
 pub mod s3;
 pub mod s3_auto_sync;
 pub mod s3_sync;
+pub mod schedule;
 pub mod session_usage;
 pub mod session_usage_codex;
 pub mod session_usage_gemini;
@@ -40,8 +41,9 @@ pub use config::ConfigService;
 pub use mcp::McpService;
 pub use omo::OmoService;
 pub use prompt::PromptService;
-pub use provider::{ProviderService, ProviderSortUpdate, SwitchResult};
+pub use provider::{DeleteOutcome, ProviderService, ProviderSortUpdate, SwitchResult};
 pub use proxy::ProxyService;
+pub use schedule::{ScheduleService, SwitchFn};
 #[allow(unused_imports)]
 pub use skill::{DiscoverableSkill, Skill, SkillRepo, SkillService};
 pub use speedtest::{EndpointLatency, SpeedtestService};

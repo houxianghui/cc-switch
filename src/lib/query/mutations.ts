@@ -230,10 +230,8 @@ export const useDeleteProviderMutation = (appId: AppId) => {
   const { t } = useTranslation();
 
   return useMutation({
-    mutationFn: async (providerId: string) => {
-      await providersApi.delete(providerId, appId);
-    },
-    onSuccess: async () => {
+    mutationFn: (providerId: string) => providersApi.delete(providerId, appId),
+    onSuccess: async (outcome) => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
 
       if (appId === "opencode") {
@@ -277,6 +275,14 @@ export const useDeleteProviderMutation = (appId: AppId) => {
           closeButton: true,
         },
       );
+
+      if (outcome.cascaded_rule_count > 0) {
+        toast.info(
+          t("notifications.scheduleRulesCascadeDeleted", {
+            count: outcome.cascaded_rule_count,
+          }),
+        );
+      }
     },
     onError: (error: Error) => {
       const rawDetail = extractErrorMessage(error);

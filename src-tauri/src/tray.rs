@@ -9,7 +9,26 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::app_config::AppType;
 use crate::error::AppError;
+use crate::services::schedule::{ScheduleServiceState, ScheduledState};
 use crate::store::AppState;
+
+/// Informational tray line describing what the scheduler would do for one app.
+///
+/// The wording mirrors the `tray.scheduled*` keys of the four frontend locale
+/// bundles, including their `{{provider}}` / `{{time}}` placeholders, so the tray
+/// and the UI stay in sync.
+pub(crate) fn build_scheduled_label(texts: &TrayTexts, state: ScheduledState) -> String {
+    match state {
+        ScheduledState::Active { provider, until } => texts
+            .scheduled_active
+            .replace("{{provider}}", &provider)
+            .replace("{{time}}", &until),
+        ScheduledState::Idle => texts.scheduled_idle.to_string(),
+        ScheduledState::Fallback { provider } => {
+            texts.scheduled_fallback.replace("{{provider}}", &provider)
+        }
+    }
+}
 
 const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
 const H_TIER_NAMES: &[&str] = &[crate::services::subscription::TIER_FIVE_HOUR];
@@ -59,6 +78,13 @@ pub struct TrayTexts {
     pub _auto_label: &'static str,
     pub projects_label: &'static str,
     pub no_project_label: &'static str,
+    pub open_schedules: &'static str,
+    pub run_scheduler_now: &'static str,
+    /// `{{provider}}` / `{{time}}` placeholders, as in the frontend locale bundles.
+    pub scheduled_active: &'static str,
+    pub scheduled_idle: &'static str,
+    /// `{{provider}}` placeholder.
+    pub scheduled_fallback: &'static str,
 }
 
 /// 将系统区域标识映射为托盘支持的语言码。
@@ -108,6 +134,11 @@ impl TrayTexts {
                 _auto_label: "Auto (Failover)",
                 projects_label: "Projects",
                 no_project_label: "No project",
+                open_schedules: "Open Schedules",
+                run_scheduler_now: "Run Scheduler Now",
+                scheduled_active: "Scheduled: {{provider}} until {{time}}",
+                scheduled_idle: "Scheduled: idle (no rule active)",
+                scheduled_fallback: "Scheduled: fallback to {{provider}}",
             },
             "ja" => Self {
                 show_main: "メインウィンドウを開く",
@@ -118,6 +149,11 @@ impl TrayTexts {
                 _auto_label: "自動 (フェイルオーバー)",
                 projects_label: "プロジェクト",
                 no_project_label: "プロジェクトを使用しない",
+                open_schedules: "スケジュールを開く",
+                run_scheduler_now: "スケジューラを今すぐ実行",
+                scheduled_active: "スケジュール：{{provider}}（{{time}} まで）",
+                scheduled_idle: "スケジュール：待機中（有効なルールなし）",
+                scheduled_fallback: "スケジュール：{{provider}} にフォールバック",
             },
             "zh-TW" => Self {
                 show_main: "開啟主介面",
@@ -128,6 +164,11 @@ impl TrayTexts {
                 _auto_label: "自動 (故障轉移)",
                 projects_label: "專案",
                 no_project_label: "不使用專案",
+                open_schedules: "開啟排程",
+                run_scheduler_now: "立即執行排程器",
+                scheduled_active: "定時切換：{{provider}}，至 {{time}}",
+                scheduled_idle: "定時切換：閒置（無生效規則）",
+                scheduled_fallback: "定時切換：回退至 {{provider}}",
             },
             _ => Self {
                 show_main: "打开主界面",
@@ -138,6 +179,11 @@ impl TrayTexts {
                 _auto_label: "自动 (故障转移)",
                 projects_label: "项目",
                 no_project_label: "不使用项目",
+                open_schedules: "打开定时切换",
+                run_scheduler_now: "立即执行调度器",
+                scheduled_active: "定时切换：{{provider}}，至 {{time}}",
+                scheduled_idle: "定时切换：空闲（无生效规则）",
+                scheduled_fallback: "定时切换：回退到 {{provider}}",
             },
         }
     }
@@ -660,7 +706,12 @@ fn handle_provider_click(
 
         // 切换供应商。需要本地路由的供应商也不在这里自动启动代理，
         // 由用户在页面/设置中手动开启。
-        crate::services::ProviderService::switch(app_state.inner(), app_type.clone(), provider_id)?;
+        crate::services::ProviderService::switch(
+            app_state.inner(),
+            app_type.clone(),
+            provider_id,
+            crate::schedule_rules::SwitchSource::Manual,
+        )?;
 
         // 更新托盘菜单
         if let Ok(new_menu) = create_tray_menu(app, app_state.inner()) {
@@ -727,6 +778,13 @@ pub fn create_tray_menu(
 
     // Pre-compute proxy running state (used to disable official providers in tray menu)
     let is_proxy_running = futures::executor::block_on(app_state.proxy_service.is_running());
+
+    // The schedule service is managed asynchronously during setup, so the first tray
+    // build can legitimately race ahead of it — treat "not yet managed" as "no line".
+    let schedule_service = app
+        .try_state::<ScheduleServiceState>()
+        .map(|state| state.0.clone());
+    let schedule_now = chrono::Local::now();
 
     // 每个应用类型折叠为子菜单，避免供应商过多时菜单过长
     for section in TRAY_SECTIONS.iter() {
@@ -805,6 +863,24 @@ pub fn create_tray_menu(
             })?;
             section_handles.insert(section.app_type.clone(), submenu.clone());
             menu_builder = menu_builder.item(&submenu);
+        }
+
+        // Informational scheduler line (spec 8.6). Disabled on purpose: clicks are
+        // never routed anywhere, so `handle_tray_menu_event` needs no arm for this id.
+        if let Some(service) = schedule_service.as_ref() {
+            let label = build_scheduled_label(
+                &tray_texts,
+                service.current_state_for(section.app_type.clone(), schedule_now),
+            );
+            let scheduled_item = MenuItem::with_id(
+                app,
+                format!("scheduled_{app_type_str}"),
+                &label,
+                false,
+                None::<&str>,
+            )
+            .map_err(|e| AppError::Message(format!("创建{}调度提示失败: {e}", section.log_name)))?;
+            menu_builder = menu_builder.item(&scheduled_item);
         }
 
         menu_builder = menu_builder.separator();
@@ -906,6 +982,29 @@ pub fn create_tray_menu(
 
     menu_builder = menu_builder.item(&lightweight_item).separator();
 
+    // Global scheduler actions (spec 8.6)
+    let open_schedules_item = MenuItem::with_id(
+        app,
+        "open_schedules",
+        tray_texts.open_schedules,
+        true,
+        None::<&str>,
+    )
+    .map_err(|e| AppError::Message(format!("创建打开定时切换菜单失败: {e}")))?;
+    let run_scheduler_now_item = MenuItem::with_id(
+        app,
+        "run_scheduler_now",
+        tray_texts.run_scheduler_now,
+        true,
+        None::<&str>,
+    )
+    .map_err(|e| AppError::Message(format!("创建立即执行调度器菜单失败: {e}")))?;
+
+    menu_builder = menu_builder
+        .item(&open_schedules_item)
+        .item(&run_scheduler_now_item)
+        .separator();
+
     // 退出菜单（分隔符已在上面的 section 循环中添加）
     let quit_item = MenuItem::with_id(app, "quit", tray_texts.quit, true, None::<&str>)
         .map_err(|e| AppError::Message(format!("创建退出菜单失败: {e}")))?;
@@ -992,32 +1091,50 @@ pub fn apply_tray_policy(app: &tauri::AppHandle, dock_visible: bool) {
     }
 }
 
+/// 显示并聚焦主窗口；轻量模式下先重建窗口。
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        #[cfg(target_os = "windows")]
+        {
+            let _ = window.set_skip_taskbar(false);
+        }
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        #[cfg(target_os = "linux")]
+        {
+            crate::linux_fix::nudge_main_window(window.clone());
+        }
+        #[cfg(target_os = "macos")]
+        {
+            apply_tray_policy(app, true);
+        }
+    } else if crate::lightweight::is_lightweight_mode() {
+        if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
+            log::error!("退出轻量模式重建窗口失败: {e}");
+        }
+    }
+}
+
 /// 处理托盘菜单事件
 pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
     log::info!("处理托盘菜单事件: {event_id}");
 
     match event_id {
         "show_main" => {
-            if let Some(window) = app.get_webview_window("main") {
-                #[cfg(target_os = "windows")]
-                {
-                    let _ = window.set_skip_taskbar(false);
-                }
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-                #[cfg(target_os = "linux")]
-                {
-                    crate::linux_fix::nudge_main_window(window.clone());
-                }
-                #[cfg(target_os = "macos")]
-                {
-                    apply_tray_policy(app, true);
-                }
-            } else if crate::lightweight::is_lightweight_mode() {
-                if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
-                    log::error!("退出轻量模式重建窗口失败: {e}");
-                }
+            show_main_window(app);
+        }
+        "open_schedules" => {
+            show_main_window(app);
+            // App-level 广播（而非 window.emit）：轻量模式下窗口可能刚被重建，
+            // 拿不到句柄也不该丢事件。
+            if let Err(e) = app.emit("schedule://open", ()) {
+                log::error!("发射 schedule://open 事件失败: {e}");
+            }
+        }
+        "run_scheduler_now" => {
+            if let Err(e) = app.emit("schedule://evaluate-now", ()) {
+                log::error!("发射 schedule://evaluate-now 事件失败: {e}");
             }
         }
         "open_website" => {
@@ -1177,11 +1294,12 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::{
-        format_script_summary, format_subscription_summary, provider_uses_official_subscription,
-        TRAY_ID, TRAY_SECTIONS,
+        build_scheduled_label, format_script_summary, format_subscription_summary,
+        provider_uses_official_subscription, TrayTexts, TRAY_ID, TRAY_SECTIONS,
     };
     use crate::app_config::AppType;
     use crate::provider::{Provider, UsageData, UsageResult};
+    use crate::services::schedule::ScheduledState;
     use crate::services::subscription::{
         CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_GEMINI_FLASH,
         TIER_GEMINI_FLASH_LITE, TIER_GEMINI_PRO, TIER_MONTHLY, TIER_SEVEN_DAY, TIER_SEVEN_DAY_OPUS,
@@ -1192,6 +1310,74 @@ mod tests {
     fn tray_id_is_unique_to_app() {
         assert_eq!(TRAY_ID, "cc-switch");
         assert_ne!(TRAY_ID, "main");
+    }
+
+    #[test]
+    fn tray_menu_includes_scheduled_active_label() {
+        let texts = TrayTexts::from_language("en");
+        let label = build_scheduled_label(
+            &texts,
+            ScheduledState::Active {
+                provider: "p1".to_string(),
+                until: "18:00".to_string(),
+            },
+        );
+        assert!(label.contains("Scheduled"), "expected prefix in {label}");
+        assert!(label.contains("p1"), "expected provider in {label}");
+        assert!(label.contains("18:00"), "expected end time in {label}");
+        assert!(
+            !label.contains("{{"),
+            "every placeholder must be filled in {label}"
+        );
+    }
+
+    #[test]
+    fn tray_menu_includes_scheduled_idle_label() {
+        let texts = TrayTexts::from_language("en");
+        let label = build_scheduled_label(&texts, ScheduledState::Idle);
+        assert!(label.contains("Scheduled"), "expected prefix in {label}");
+        assert!(label.contains("idle"), "expected idle wording in {label}");
+    }
+
+    #[test]
+    fn tray_menu_includes_scheduled_fallback_label() {
+        let texts = TrayTexts::from_language("en");
+        let label = build_scheduled_label(
+            &texts,
+            ScheduledState::Fallback {
+                provider: "p2".to_string(),
+            },
+        );
+        assert!(label.contains("Scheduled"), "expected prefix in {label}");
+        assert!(
+            label.contains("fallback"),
+            "expected fallback wording in {label}"
+        );
+        assert!(label.contains("p2"), "expected provider in {label}");
+    }
+
+    /// The tray resolves the language itself (settings, then system locale), so the
+    /// scheduled line must follow it like every other tray string.
+    #[test]
+    fn scheduled_label_follows_the_tray_language() {
+        for (language, expected) in [
+            ("zh", "定时切换"),
+            ("zh-TW", "定時切換"),
+            ("ja", "スケジュール"),
+        ] {
+            let texts = TrayTexts::from_language(language);
+            let label = build_scheduled_label(
+                &texts,
+                ScheduledState::Active {
+                    provider: "p1".to_string(),
+                    until: "18:00".to_string(),
+                },
+            );
+            assert!(label.contains(expected), "{language}: got {label}");
+            assert!(label.contains("p1"), "{language}: got {label}");
+            assert!(label.contains("18:00"), "{language}: got {label}");
+            assert!(!label.contains("{{"), "{language}: got {label}");
+        }
     }
 
     #[test]

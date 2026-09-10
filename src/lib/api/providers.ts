@@ -21,6 +21,12 @@ export interface SwitchResult {
   warnings: string[];
 }
 
+/** Mirrors `services::provider::DeleteOutcome` (serialized as-is, snake_case). */
+export interface DeleteOutcome {
+  /** Schedule rules that pointed at the provider and were cascade-deleted with it. */
+  cascaded_rule_count: number;
+}
+
 export interface OpenTerminalOptions {
   cwd?: string;
 }
@@ -75,7 +81,7 @@ export const providersApi = {
     });
   },
 
-  async delete(id: string, appId: AppId): Promise<boolean> {
+  async delete(id: string, appId: AppId): Promise<DeleteOutcome> {
     return await invoke("delete_provider", { id, app: appId });
   },
 

@@ -27,6 +27,7 @@ import {
   LayoutDashboard,
   Loader2,
   RefreshCw,
+  CalendarClock,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -49,6 +50,10 @@ import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import { useScanUnmanagedSkills } from "@/hooks/useSkills";
+import {
+  SCHEDULE_DEGRADED_FAILURE_THRESHOLD,
+  useScheduleHealth,
+} from "@/hooks/useScheduleHealth";
 import {
   extractErrorMessage,
   translatePiProviderMutationError,
@@ -96,6 +101,7 @@ import { UniversalProviderPanel } from "@/components/universal";
 import { McpIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
+import { SchedulesPage } from "@/components/schedule/SchedulesPage";
 import {
   useDisableCurrentOmo,
   useDisableCurrentOmoSlim,
@@ -127,7 +133,8 @@ type View =
   | "openclawEnv"
   | "openclawTools"
   | "openclawAgents"
-  | "hermesMemory";
+  | "hermesMemory"
+  | "schedules";
 
 interface SyncStatusUpdatedPayload {
   source?: string;
@@ -163,6 +170,7 @@ const VALID_VIEWS: View[] = [
   "openclawTools",
   "openclawAgents",
   "hermesMemory",
+  "schedules",
 ];
 
 const getInitialView = (): View => {
@@ -269,6 +277,15 @@ function App() {
   // 这里 enabled 默认 false，仅用于「导入」按钮的绿点提示，不主动发起扫描。
   const { data: unmanagedSkills } = useScanUnmanagedSkills();
   const hasUnmanagedSkills = (unmanagedSkills?.length ?? 0) > 0;
+  const { data: scheduleHealth } = useScheduleHealth();
+  const isSchedulerDegraded =
+    (scheduleHealth?.consecutive_failures ?? 0) >=
+    SCHEDULE_DEGRADED_FAILURE_THRESHOLD;
+  const schedulesButtonLabel = isSchedulerDegraded
+    ? `${t("nav.schedules")} — ${t("schedule.health.degraded", {
+        n: scheduleHealth?.consecutive_failures ?? 0,
+      })}`
+    : t("nav.schedules");
   const addActionButtonClass =
     "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
 
@@ -1087,6 +1104,8 @@ function App() {
           return <ToolsPanel />;
         case "openclawAgents":
           return <AgentsDefaultsPanel />;
+        case "schedules":
+          return <SchedulesPage />;
         default:
           return (
             <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
@@ -1341,6 +1360,22 @@ function App() {
                   className="hover:bg-black/5 dark:hover:bg-white/5"
                 >
                   <Settings className="w-4 h-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setCurrentView("schedules")}
+                  title={schedulesButtonLabel}
+                  aria-label={schedulesButtonLabel}
+                  className="relative hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <CalendarClock className="w-4 h-4" />
+                  {isSchedulerDegraded && (
+                    <span
+                      className="absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500"
+                      aria-hidden="true"
+                    />
+                  )}
                 </Button>
                 <UpdateBadge
                   onClick={() => {
