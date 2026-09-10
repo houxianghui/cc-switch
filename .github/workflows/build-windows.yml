@@ -1,0 +1,151 @@
+name: Build Windows
+
+# Manual, unsigned Windows build. Produces an MSI installer and a portable exe
+# as workflow artifacts, and publishes them as a prerelease. Needs no secrets —
+# the updater artifacts are disabled so no Tauri signing key is required.
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: "Target architecture"
+        type: choice
+        default: x86_64
+        options:
+          - x86_64
+          - arm64
+      create_release:
+        description: "Also publish the assets as a prerelease"
+        type: boolean
+        default: true
+
+concurrency:
+  group: build-windows-${{ github.ref }}-${{ inputs.arch }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ inputs.arch }})
+    runs-on: ${{ inputs.arch == 'arm64' && 'windows-11-arm' || 'windows-2022' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Setup pnpm
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+        run: |
+          corepack enable
+          corepack install
+          pnpm --version
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ inputs.arch == 'arm64' && 'aarch64-pc-windows-msvc' || 'x86_64-pc-windows-msvc' }}
+
+      - name: Get pnpm store directory
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-store-
+
+      - name: Cache Cargo registry and build
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-${{ inputs.arch }}-cargo-build-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ inputs.arch }}-cargo-build-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        shell: pwsh
+        env:
+          TAURI_ARCH: ${{ inputs.arch }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # createUpdaterArtifacts is on in tauri.conf.json, which makes the build
+          # demand a signing key. Off here: this artifact is not an update source.
+          $noUpdater = '{"bundle":{"createUpdaterArtifacts":false}}'
+          if ($env:TAURI_ARCH -eq 'arm64') {
+            pnpm tauri build --target aarch64-pc-windows-msvc --bundles msi --config $noUpdater
+          } else {
+            pnpm tauri build --bundles msi --config $noUpdater
+          }
+
+      - name: Collect assets
+        id: collect
+        shell: pwsh
+        env:
+          TAURI_ARCH: ${{ inputs.arch }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $suffix = if ($env:TAURI_ARCH -eq 'arm64') { '-arm64' } else { '' }
+          $targetDir = if ($env:TAURI_ARCH -eq 'arm64') {
+            'src-tauri/target/aarch64-pc-windows-msvc/release'
+          } else {
+            'src-tauri/target/release'
+          }
+
+          New-Item -ItemType Directory -Force -Path dist-windows | Out-Null
+
+          $msi = Get-ChildItem -Path "$targetDir/bundle/msi" -Filter *.msi -ErrorAction Stop |
+            Select-Object -First 1
+          Copy-Item $msi.FullName "dist-windows/CC-Switch-$version-Windows$suffix.msi"
+
+          $exe = Join-Path $targetDir 'cc-switch.exe'
+          if (-not (Test-Path $exe)) { throw "cc-switch.exe not found at $exe" }
+          New-Item -ItemType Directory -Force -Path portable | Out-Null
+          Copy-Item $exe portable/
+          # Marker file the app reads to keep its data next to the exe.
+          Set-Content -Path portable/portable.ini -Value '[portable]' -Encoding ASCII
+          Compress-Archive -Path portable/* -DestinationPath "dist-windows/CC-Switch-$version-Windows$suffix-Portable.zip"
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: cc-switch-${{ steps.collect.outputs.version }}-windows-${{ inputs.arch }}
+          path: dist-windows/*
+          if-no-files-found: error
+          retention-days: 14
+
+      # Prerelease: published and downloadable straight away, but excluded from
+      # `/releases/latest/` and from sync-r2.yml, which only fires on `released`.
+      # The tag is deliberately not `v*` so it cannot collide with release.yml.
+      - name: Publish prerelease
+        if: inputs.create_release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: win-build-${{ steps.collect.outputs.version }}-${{ github.run_number }}
+          name: Windows build ${{ steps.collect.outputs.version }} (${{ inputs.arch }})
+          prerelease: true
+          files: dist-windows/*
+          body: |
+            Unsigned Windows build of ${{ steps.collect.outputs.version }} (${{ inputs.arch }}) from `${{ github.sha }}`.
+
+            - `.msi` — 安装版（per-user 安装）
+            - `-Portable.zip` — 绿色版，解压后直接运行 `cc-switch.exe`
+
+            未做代码签名，首次运行 SmartScreen 会提示；不可作为自动更新来源。
