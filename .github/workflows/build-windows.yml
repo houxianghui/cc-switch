@@ -1,7 +1,7 @@
 name: Build Windows
 
 # Manual, unsigned Windows build. Produces an MSI installer and a portable exe
-# as workflow artifacts, and publishes them as a prerelease. Needs no secrets —
+# as workflow artifacts, and publishes them as a release. Needs no secrets —
 # the updater artifacts are disabled so no Tauri signing key is required.
 
 on:
@@ -15,7 +15,7 @@ on:
           - x86_64
           - arm64
       create_release:
-        description: "Also publish the assets as a prerelease"
+        description: "Also publish the assets as a release"
         type: boolean
         default: true
 
@@ -131,16 +131,15 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # Prerelease: published and downloadable straight away, but excluded from
-      # `/releases/latest/` and from sync-r2.yml, which only fires on `released`.
+      # Published as a full release. sync-r2.yml listens for `released`, but it
+      # no-ops without R2 secrets, which only the canonical repo holds.
       # The tag is deliberately not `v*` so it cannot collide with release.yml.
-      - name: Publish prerelease
+      - name: Publish release
         if: inputs.create_release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: win-build-${{ steps.collect.outputs.version }}-${{ github.run_number }}
           name: Windows build ${{ steps.collect.outputs.version }} (${{ inputs.arch }})
-          prerelease: true
           files: dist-windows/*
           body: |
             Unsigned Windows build of ${{ steps.collect.outputs.version }} (${{ inputs.arch }}) from `${{ github.sha }}`.
