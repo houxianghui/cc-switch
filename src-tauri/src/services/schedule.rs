@@ -301,15 +301,27 @@ impl ScheduleService {
         if let Some(rule) = resolve_active_rule(&rules, now) {
             if let Some(w) = rule.windows.iter().find(|w| w.matches(now)) {
                 return ScheduledState::Active {
-                    provider: rule.provider_id.clone(),
+                    provider: self.provider_label(app_str, &rule.provider_id),
                     until: w.end.clone(),
                 };
             }
         }
         match self.db.get_fallback_provider(app_str) {
-            Ok(Some(p)) => ScheduledState::Fallback { provider: p },
+            Ok(Some(p)) => ScheduledState::Fallback {
+                provider: self.provider_label(app_str, &p),
+            },
             _ => ScheduledState::Idle,
         }
+    }
+
+    /// Human-readable provider name for tray labels, falling back to the id when the
+    /// provider was deleted out from under a rule.
+    fn provider_label(&self, app: &str, provider_id: &str) -> String {
+        self.db
+            .get_provider_name(provider_id, app)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| provider_id.to_string())
     }
 
     /// Internal evaluation logic (spec 5.4 decision table). Updates the decision-epoch
@@ -662,9 +674,37 @@ mod tests {
         let state = svc.current_state_for(AppType::Claude, Local::now());
         match state {
             ScheduledState::Active { provider, until } => {
-                assert_eq!(provider, "p1");
+                assert_eq!(provider, "claude-p1");
                 assert_eq!(until, end);
             }
+            other => panic!("expected Active, got {other:?}"),
+        }
+    }
+
+    /// A rule can outlive its provider (deleted via a path that leaves the rule in
+    /// place). The tray must still render something, so the id is the fallback.
+    #[test]
+    fn current_state_for_falls_back_to_the_id_when_the_provider_is_gone() {
+        let db = Arc::new(Database::memory().unwrap());
+        let svc = make_svc_no_record(db.clone());
+
+        let (start, end) = wide_window_around_now();
+        db.create_schedule_rule(&NewScheduleRuleRequest {
+            app: "claude".into(),
+            provider_id: "ghost".into(),
+            windows: vec![TimeWindow {
+                dow: all_dow(),
+                start,
+                end,
+            }],
+            priority: 0,
+            enabled: true,
+            note: None,
+        })
+        .unwrap();
+
+        match svc.current_state_for(AppType::Claude, Local::now()) {
+            ScheduledState::Active { provider, .. } => assert_eq!(provider, "ghost"),
             other => panic!("expected Active, got {other:?}"),
         }
     }
@@ -717,7 +757,7 @@ mod tests {
         assert_eq!(
             state,
             ScheduledState::Fallback {
-                provider: "p2".into()
+                provider: "claude-p2".into()
             }
         );
     }

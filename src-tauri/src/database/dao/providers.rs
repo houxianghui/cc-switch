@@ -127,6 +127,21 @@ impl Database {
         }
     }
 
+    /// Display name only. Preferred over [`Self::get_provider_by_id`] for labels,
+    /// which would otherwise pull `settings_config` — and its API keys — into memory.
+    pub fn get_provider_name(&self, id: &str, app_type: &str) -> Result<Option<String>, AppError> {
+        let conn = lock_conn!(self.conn);
+        match conn.query_row(
+            "SELECT name FROM providers WHERE id = ?1 AND app_type = ?2",
+            params![id, app_type],
+            |row| row.get(0),
+        ) {
+            Ok(name) => Ok(Some(name)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(AppError::Database(e.to_string())),
+        }
+    }
+
     pub fn get_provider_by_id(
         &self,
         id: &str,
@@ -1000,5 +1015,48 @@ mod ensure_official_seed_tests {
         let result =
             db.ensure_official_seed_by_id(CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, AppType::Claude);
         assert!(result.is_err(), "(id, app_type) mismatch should be Err");
+    }
+}
+
+#[cfg(test)]
+mod provider_name_tests {
+    use crate::app_config::AppType;
+    use crate::database::{Database, CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID};
+
+    #[test]
+    fn returns_the_display_name() {
+        let db = Database::memory().expect("memory db");
+        db.init_default_official_providers().expect("seed");
+
+        let name = db
+            .get_provider_name(
+                CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID,
+                AppType::ClaudeDesktop.as_str(),
+            )
+            .expect("query ok");
+        assert_eq!(name.as_deref(), Some("Claude Desktop Official"));
+    }
+
+    #[test]
+    fn returns_none_for_an_unknown_id() {
+        let db = Database::memory().expect("memory db");
+        let name = db
+            .get_provider_name("nope", AppType::Claude.as_str())
+            .expect("query ok");
+        assert_eq!(name, None);
+    }
+
+    #[test]
+    fn returns_none_when_the_app_type_does_not_match() {
+        let db = Database::memory().expect("memory db");
+        db.init_default_official_providers().expect("seed");
+
+        let name = db
+            .get_provider_name(
+                CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID,
+                AppType::Claude.as_str(),
+            )
+            .expect("query ok");
+        assert_eq!(name, None);
     }
 }
