@@ -7,6 +7,7 @@ mod gemini_auth;
 mod live;
 mod pi;
 mod usage;
+pub(crate) mod user_keys;
 
 use indexmap::IndexMap;
 use regex::Regex;
@@ -1027,6 +1028,236 @@ mod tests {
         );
     }
 
+    fn seed_claude_provider(state: &AppState, id: &str, token: &str, base_url: &str) -> Provider {
+        let provider = Provider::with_id(
+            id.to_string(),
+            id.to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": token,
+                    "ANTHROPIC_BASE_URL": base_url
+                }
+            }),
+            None,
+        );
+        state
+            .db
+            .save_provider(AppType::Claude.as_str(), &provider)
+            .expect("save provider");
+        provider
+    }
+
+    fn set_claude_current(state: &AppState, id: &str) {
+        state
+            .db
+            .set_current_provider(AppType::Claude.as_str(), id)
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some(id))
+            .expect("set local current provider");
+    }
+
+    fn add_user_owned_keys_to_live() {
+        let path = get_claude_settings_path();
+        let mut live: Value = read_json_file(&path).expect("read live");
+        live["hooks"] = json!({
+            "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "echo hi"}]}]
+        });
+        live["statusLine"] = json!({"type": "command", "command": "my-status"});
+        write_json_file(&path, &live).expect("write live with user keys");
+    }
+
+    fn assert_live_has_user_owned_keys(live: &Value) {
+        assert_eq!(
+            live["hooks"],
+            json!({
+                "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "echo hi"}]}]
+            }),
+            "live hooks must survive"
+        );
+        assert_eq!(
+            live["statusLine"],
+            json!({"type": "command", "command": "my-status"}),
+            "live statusLine must survive"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn switch_claude_provider_preserves_live_user_owned_keys() {
+        with_test_home(|state, _| {
+            crate::settings::reload_settings().expect("reload settings");
+            let provider_a = seed_claude_provider(state, "a", "token-a", "https://a.example");
+            seed_claude_provider(state, "b", "token-b", "https://b.example");
+            set_claude_current(state, "a");
+            write_live_with_common_config_for_state(state, &AppType::Claude, &provider_a)
+                .expect("seed live");
+            add_user_owned_keys_to_live();
+
+            ProviderService::switch(
+                state,
+                AppType::Claude,
+                "b",
+                crate::schedule_rules::SwitchSource::Manual,
+            )
+            .expect("switch to b");
+
+            let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+            assert_eq!(
+                live["env"]["ANTHROPIC_BASE_URL"],
+                json!("https://b.example"),
+                "provider-owned config must follow the switch"
+            );
+            assert_live_has_user_owned_keys(&live);
+
+            let saved_a = state
+                .db
+                .get_provider_by_id("a", AppType::Claude.as_str())
+                .expect("query provider a")
+                .expect("provider a exists");
+            assert!(
+                saved_a.settings_config.get("hooks").is_none(),
+                "backfill must not capture user-owned keys into the card"
+            );
+            assert!(saved_a.settings_config.get("statusLine").is_none());
+            assert_eq!(
+                saved_a.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"],
+                json!("token-a"),
+                "backfill still captures provider-owned config"
+            );
+        });
+    }
+
+    /// 重应用当前供应商（current_id == id 跳过 backfill 的路径）也不能丢 hooks。
+    #[test]
+    #[serial]
+    fn reapply_current_claude_provider_preserves_live_user_owned_keys() {
+        with_test_home(|state, _| {
+            crate::settings::reload_settings().expect("reload settings");
+            let provider_a = seed_claude_provider(state, "a", "token-a", "https://a.example");
+            set_claude_current(state, "a");
+            write_live_with_common_config_for_state(state, &AppType::Claude, &provider_a)
+                .expect("seed live");
+            add_user_owned_keys_to_live();
+
+            ProviderService::switch(
+                state,
+                AppType::Claude,
+                "a",
+                crate::schedule_rules::SwitchSource::Manual,
+            )
+            .expect("re-apply current provider");
+
+            let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+            assert_live_has_user_owned_keys(&live);
+        });
+    }
+
+    /// 编辑保存当前供应商（不经过 switch backfill）也不能丢 hooks。
+    #[tokio::test]
+    #[serial]
+    async fn update_current_claude_provider_preserves_live_user_owned_keys() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        let original = seed_claude_provider(&state, "p1", "token-a", "https://api.old.example");
+        set_claude_current(&state, "p1");
+        write_live_with_common_config_for_state(&state, &AppType::Claude, &original)
+            .expect("seed live");
+        add_user_owned_keys_to_live();
+
+        let mut updated = original.clone();
+        updated.settings_config["env"]["ANTHROPIC_BASE_URL"] =
+            Value::String("https://api.new.example".into());
+        ProviderService::update(&state, AppType::Claude, None, updated)
+            .expect("update current provider");
+
+        let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+        assert_eq!(
+            live["env"]["ANTHROPIC_BASE_URL"].as_str(),
+            Some("https://api.new.example")
+        );
+        assert_live_has_user_owned_keys(&live);
+    }
+
+    /// 历史卡片里已存 hooks（修复前 backfill 捕获的）：live 没有时不得重新注入，
+    /// 否则用户在 live 里删除的 hooks 会在切换时复活。
+    #[test]
+    #[serial]
+    fn switch_to_legacy_card_does_not_resurrect_deleted_user_owned_keys() {
+        with_test_home(|state, _| {
+            crate::settings::reload_settings().expect("reload settings");
+            let provider_a = seed_claude_provider(state, "a", "token-a", "https://a.example");
+            let legacy_b = Provider::with_id(
+                "b".to_string(),
+                "b".to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "token-b",
+                        "ANTHROPIC_BASE_URL": "https://b.example"
+                    },
+                    "hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "old"}]}]}
+                }),
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &legacy_b)
+                .expect("save legacy provider");
+            set_claude_current(state, "a");
+            write_live_with_common_config_for_state(state, &AppType::Claude, &provider_a)
+                .expect("seed live");
+
+            ProviderService::switch(
+                state,
+                AppType::Claude,
+                "b",
+                crate::schedule_rules::SwitchSource::Manual,
+            )
+            .expect("switch to legacy b");
+
+            let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+            assert_eq!(
+                live["env"]["ANTHROPIC_BASE_URL"],
+                json!("https://b.example")
+            );
+            assert!(
+                live.get("hooks").is_none(),
+                "card-carried hooks must not be injected when live has none"
+            );
+        });
+    }
+
+    #[test]
+    fn claude_common_config_extraction_strips_user_owned_keys() {
+        let snippet = ProviderService::extract_common_config_snippet_from_settings(
+            AppType::Claude,
+            &json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-secret",
+                    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8192"
+                },
+                "hooks": {"PreToolUse": []},
+                "permissions": {"allow": ["Bash(ls)"]},
+                "statusLine": {"type": "command", "command": "st"},
+                "theme": "dark"
+            }),
+        )
+        .expect("extract snippet");
+        let parsed: Value = serde_json::from_str(&snippet).expect("parse snippet");
+        assert!(parsed.get("hooks").is_none());
+        assert!(parsed.get("permissions").is_none());
+        assert!(parsed.get("statusLine").is_none());
+        assert!(parsed.get("theme").is_none());
+        assert_eq!(
+            parsed["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"],
+            json!("8192"),
+            "ordinary shareable config must still be extracted"
+        );
+        assert!(parsed["env"].get("ANTHROPIC_AUTH_TOKEN").is_none());
+    }
+
     /// A stale backup row must be refreshed but must not divert the live write.
     #[tokio::test]
     #[serial]
@@ -1502,8 +1733,7 @@ GEMINI_TIMEOUT_MS=30000
             },
             "apiKey": "sk-top",
             "api_key": "sk-top2",
-            "theme": "dark",
-            "includeCoAuthoredBy": false
+            "forceLoginMethod": "claudeai"
         });
 
         let snippet = ProviderService::extract_claude_common_config(&settings)
@@ -1559,8 +1789,15 @@ GEMINI_TIMEOUT_MS=30000
                 .and_then(|v| v.as_str()),
             Some("8192")
         );
-        assert_eq!(value.get("theme").and_then(|v| v.as_str()), Some("dark"));
-        assert_eq!(value.get("includeCoAuthoredBy"), Some(&json!(false)));
+        assert_eq!(
+            value.get("forceLoginMethod").and_then(|v| v.as_str()),
+            Some("claudeai"),
+            "shareable top-level config must survive extraction"
+        );
+        assert!(
+            value.get("theme").is_none() && value.get("includeCoAuthoredBy").is_none(),
+            "user-owned keys must not enter common config"
+        );
     }
 
     /// Regression for issue #4272: Fable tier env keys must not enter the shared
@@ -1580,7 +1817,7 @@ GEMINI_TIMEOUT_MS=30000
                 "ANTHROPIC_MODEL": "default-mapped",
                 "ENABLE_TOOL_SEARCH": "true"
             },
-            "theme": "dark"
+            "forceLoginMethod": "claudeai"
         });
 
         let snippet = ProviderService::extract_claude_common_config(&settings)
@@ -1610,7 +1847,14 @@ GEMINI_TIMEOUT_MS=30000
                 .and_then(|v| v.as_str()),
             Some("true")
         );
-        assert_eq!(value.get("theme").and_then(|v| v.as_str()), Some("dark"));
+        assert_eq!(
+            value.get("forceLoginMethod").and_then(|v| v.as_str()),
+            Some("claudeai")
+        );
+        assert!(
+            value.get("theme").is_none(),
+            "user-owned keys must not enter common config"
+        );
     }
 
     #[test]
@@ -1774,7 +2018,7 @@ command = "legacy-cmd"
                     "ANTHROPIC_BASE_URL": "https://api.a.example",
                     "ANTHROPIC_MODEL": "model-a"
                 },
-                "permissions": { "allow": ["Bash"] }
+                "feedbackSurveyState": { "lastShownTime": 1 }
             }),
             None,
         );
@@ -1811,7 +2055,7 @@ command = "legacy-cmd"
                     "ANTHROPIC_API_KEY": "PROXY_MANAGED",
                     "ANTHROPIC_MODEL": "stale-model"
                 },
-                "permissions": { "allow": ["Bash"] }
+                "feedbackSurveyState": { "lastShownTime": 1 }
             }),
         )
         .expect("seed taken-over live file");
@@ -1831,7 +2075,7 @@ command = "legacy-cmd"
                     "ANTHROPIC_BASE_URL": "https://api.updated.example",
                     "ANTHROPIC_MODEL": "model-updated"
                 },
-                "permissions": { "allow": ["Read"] }
+                "feedbackSurveyState": { "lastShownTime": 2 }
             }),
             None,
         );
@@ -1854,8 +2098,8 @@ command = "legacy-cmd"
 
         let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
         assert_eq!(
-            live.get("permissions"),
-            updated.settings_config.get("permissions"),
+            live.get("feedbackSurveyState"),
+            updated.settings_config.get("feedbackSurveyState"),
             "provider edits should propagate into Claude live config during takeover"
         );
         assert_eq!(
@@ -6645,6 +6889,11 @@ impl ProviderService {
                 obj.remove(key);
             }
         }
+
+        // 用户级键（hooks / statusLine / permissions 等）是 live 全局配置，
+        // 不进共享片段——片段会被合并进所有勾选通用配置的供应商，进了就等于
+        // 把全局键降级成"部分供应商可见"，且用户在 live 里删除后还会复活。
+        user_keys::strip_user_owned_keys(&mut config);
 
         // Check if result is empty
         if config.as_object().is_none_or(|obj| obj.is_empty()) {

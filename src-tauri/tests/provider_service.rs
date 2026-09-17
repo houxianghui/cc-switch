@@ -2204,7 +2204,7 @@ fn sync_current_provider_for_app_keeps_live_takeover_and_updates_restore_backup(
         .db
         .set_config_snippet(
             AppType::Claude.as_str(),
-            Some(r#"{ "includeCoAuthoredBy": false }"#.to_string()),
+            Some(r#"{ "forceLoginMethod": "claudeai" }"#.to_string()),
         )
         .expect("set common config snippet");
 
@@ -2249,9 +2249,9 @@ fn sync_current_provider_for_app_keeps_live_takeover_and_updates_restore_backup(
 
     assert_eq!(
         backup_value
-            .get("includeCoAuthoredBy")
-            .and_then(|v| v.as_bool()),
-        Some(false),
+            .get("forceLoginMethod")
+            .and_then(|v| v.as_str()),
+        Some("claudeai"),
         "restore backup should receive the updated effective config"
     );
     assert_eq!(
@@ -2797,11 +2797,11 @@ fn switch_claude_syncs_new_shared_keys_from_live_into_common_config() {
     if let Some(parent) = settings_path.parent() {
         std::fs::create_dir_all(parent).expect("create claude settings dir");
     }
-    // A 的 live = A 私有密钥（含非 Anthropic 的 OpenRouter 凭据）+ 已共享的 theme
+    // A 的 live = A 私有密钥（含非 Anthropic 的 OpenRouter 凭据）+ 已共享的 forceLoginMethod
     // + 用户刚在应用内新增的 enableAllProjectMcpServers
     let live = json!({
         "env": { "ANTHROPIC_API_KEY": "a-key", "OPENROUTER_API_KEY": "sk-or-leak" },
-        "theme": "dark",
+        "forceLoginMethod": "claudeai",
         "enableAllProjectMcpServers": true
     });
     std::fs::write(
@@ -2845,7 +2845,7 @@ fn switch_claude_syncs_new_shared_keys_from_live_into_common_config() {
         .db
         .set_config_snippet(
             AppType::Claude.as_str(),
-            Some(r#"{"theme":"dark"}"#.to_string()),
+            Some(r#"{"forceLoginMethod":"claudeai"}"#.to_string()),
         )
         .expect("seed common config snippet");
 
@@ -2871,8 +2871,10 @@ fn switch_claude_syncs_new_shared_keys_from_live_into_common_config() {
         "newly added shared key should be captured into common config"
     );
     assert_eq!(
-        snippet_value.get("theme").and_then(|v| v.as_str()),
-        Some("dark"),
+        snippet_value
+            .get("forceLoginMethod")
+            .and_then(|v| v.as_str()),
+        Some("claudeai"),
         "previously shared key should be preserved"
     );
     assert!(
@@ -2927,10 +2929,10 @@ fn switch_claude_syncs_deletions_from_live_into_common_config() {
     if let Some(parent) = settings_path.parent() {
         std::fs::create_dir_all(parent).expect("create claude settings dir");
     }
-    // live 里 theme 还在，但用户已删掉 enableAllProjectMcpServers
+    // live 里 forceLoginMethod 还在，但用户已删掉 enableAllProjectMcpServers
     let live = json!({
         "env": { "ANTHROPIC_API_KEY": "a-key" },
-        "theme": "dark"
+        "forceLoginMethod": "claudeai"
     });
     std::fs::write(
         &settings_path,
@@ -2974,7 +2976,9 @@ fn switch_claude_syncs_deletions_from_live_into_common_config() {
         .db
         .set_config_snippet(
             AppType::Claude.as_str(),
-            Some(r#"{"theme":"dark","enableAllProjectMcpServers":true}"#.to_string()),
+            Some(
+                r#"{"forceLoginMethod":"claudeai","enableAllProjectMcpServers":true}"#.to_string(),
+            ),
         )
         .expect("seed common config snippet");
 
@@ -2998,8 +3002,10 @@ fn switch_claude_syncs_deletions_from_live_into_common_config() {
         "deleted key should be removed from common config"
     );
     assert_eq!(
-        snippet_value.get("theme").and_then(|v| v.as_str()),
-        Some("dark"),
+        snippet_value
+            .get("forceLoginMethod")
+            .and_then(|v| v.as_str()),
+        Some("claudeai"),
         "untouched shared key should remain"
     );
 

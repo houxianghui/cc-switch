@@ -3551,7 +3551,13 @@ impl ProxyService {
 
     fn write_claude_live(&self, config: &Value) -> Result<(), String> {
         let path = get_claude_settings_path();
-        let settings = crate::services::provider::sanitize_claude_settings_for_live(config);
+        let mut settings = crate::services::provider::sanitize_claude_settings_for_live(config);
+        // 与供应商切换写入一致：用户级键（hooks 等）归 live 现有内容所有，
+        // 接管/热切换/恢复都不能丢或复活它们。
+        crate::services::provider::user_keys::strip_user_owned_keys(&mut settings);
+        crate::services::provider::user_keys::preserve_claude_user_owned_keys_from_live(
+            &mut settings,
+        );
         write_json_file(&path, &settings).map_err(|e| format!("写入 Claude 配置失败: {e}"))
     }
 
@@ -7646,7 +7652,7 @@ model = "gpt-5.1-codex"
                     "ANTHROPIC_BASE_URL": "https://api.a.example",
                     "ANTHROPIC_MODEL": "claude-old"
                 },
-                "permissions": { "allow": ["Bash"] }
+                "feedbackSurveyState": { "lastShownTime": 1 }
             }),
             None,
         );
@@ -7665,7 +7671,7 @@ model = "gpt-5.1-codex"
                     "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-ultra [1m]",
                     "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-v4-pro[1M]"
                 },
-                "permissions": { "allow": ["Read"] }
+                "feedbackSurveyState": { "lastShownTime": 2 }
             }),
             None,
         );
@@ -7693,7 +7699,7 @@ model = "gpt-5.1-codex"
                     "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Stale Sonnet",
                     "CLAUDE_CODE_SUBAGENT_MODEL": "stale-subagent"
                 },
-                "permissions": { "allow": ["Bash"] }
+                "feedbackSurveyState": { "lastShownTime": 1 }
             }))
             .expect("seed taken-over live file");
 
@@ -7704,8 +7710,8 @@ model = "gpt-5.1-codex"
 
         let live = service.read_claude_live().expect("read live config");
         assert_eq!(
-            live.get("permissions"),
-            provider_b.settings_config.get("permissions"),
+            live.get("feedbackSurveyState"),
+            provider_b.settings_config.get("feedbackSurveyState"),
             "provider-derived live settings should be refreshed"
         );
         assert_eq!(
@@ -7789,6 +7795,50 @@ model = "gpt-5.1-codex"
             .expect("backup exists");
         let expected = serde_json::to_string(&provider_b.settings_config).expect("serialize");
         assert_eq!(backup.original_config, expected);
+    }
+
+    /// 代理接管写入与供应商切换写入遵循同一条规则：用户级键（hooks 等）
+    /// 归 live 现有内容所有，接管投影不得丢弃或复活它们。
+    #[tokio::test]
+    #[serial]
+    async fn write_claude_live_preserves_user_owned_keys_from_existing_live() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        crate::config::write_json_file(
+            &get_claude_settings_path(),
+            &json!({
+                "env": { "ANTHROPIC_API_KEY": "live-key" },
+                "hooks": {
+                    "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "echo hi"}]}]
+                }
+            }),
+        )
+        .expect("seed live with hooks");
+
+        service
+            .write_claude_live(&json!({
+                "env": { "ANTHROPIC_API_KEY": "PROJECTION" },
+                "hooks": { "SessionStart": [] }
+            }))
+            .expect("write projection");
+
+        let live = service.read_claude_live().expect("read live config");
+        assert_eq!(
+            live["env"]["ANTHROPIC_API_KEY"],
+            json!("PROJECTION"),
+            "provider-owned fields follow the projection"
+        );
+        assert_eq!(
+            live["hooks"],
+            json!({
+                "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "echo hi"}]}]
+            }),
+            "live hooks must win over projection-carried hooks"
+        );
     }
 
     #[tokio::test]
