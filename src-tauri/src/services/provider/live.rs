@@ -1054,6 +1054,9 @@ fn restore_live_settings_for_provider_backfill(
         let mut settings = live_settings;
         strip_injected_codex_oauth_context_defaults(&mut settings, provider);
         strip_injected_kimi_for_coding_context_defaults(&mut settings, provider);
+        // 用户级键（hooks 等）是全局配置，不进供应商卡片——否则切回时会
+        // 把用户在别处已删除/修改的旧值重新注入 live。
+        super::user_keys::strip_user_owned_keys(&mut settings);
         return settings;
     }
     if matches!(app_type, AppType::GrokBuild) {
@@ -1278,7 +1281,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
-            let settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            let mut settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            // 用户级键（hooks 等）归 live 现有内容所有：先剥掉卡片/片段可能
+            // 携带的残留，再把 live 现有值带过。删除过的键不会复活。
+            super::user_keys::strip_user_owned_keys(&mut settings);
+            super::user_keys::preserve_claude_user_owned_keys_from_live(&mut settings);
             write_json_file(&path, &settings)?;
         }
         AppType::ClaudeDesktop => {
@@ -1884,6 +1891,9 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             }
             let mut v = read_json_file::<Value>(&settings_path)?;
             let _ = normalize_claude_models_in_value(&mut v);
+            // 用户级键（hooks 等）归 live 所有，导入的卡片不捕获——否则之后
+            // 每次写入都会把这份旧快照当权威值重新注入。
+            super::user_keys::strip_user_owned_keys(&mut v);
             v
         }
         AppType::ClaudeDesktop => {
