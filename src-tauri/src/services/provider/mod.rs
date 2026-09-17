@@ -3366,7 +3366,13 @@ wire_api = "responses"
                         .unwrap();
                     let current = managed_codex_provider("current", "old-local-id");
                     state.db.save_provider("codex", &current).unwrap();
-                    ProviderService::switch(state, AppType::Codex, &current.id).unwrap();
+                    ProviderService::switch(
+                        state,
+                        AppType::Codex,
+                        &current.id,
+                        crate::schedule_rules::SwitchSource::Manual,
+                    )
+                    .unwrap();
                     if mode != "direct" {
                         runtime.block_on(async {
                             let mut config = state.db.get_proxy_config().await.unwrap();
@@ -3483,7 +3489,13 @@ wire_api = "responses"
                             .unwrap();
                     } else {
                         state.db.save_provider("codex", &target).unwrap();
-                        ProviderService::switch(state, AppType::Codex, &target.id).unwrap();
+                        ProviderService::switch(
+                            state,
+                            AppType::Codex,
+                            &target.id,
+                            crate::schedule_rules::SwitchSource::Manual,
+                        )
+                        .unwrap();
                     }
                     let auth: Value =
                         read_json_file(&crate::codex_config::get_codex_auth_path()).unwrap();
@@ -3555,7 +3567,13 @@ wire_api = "responses"
             });
             let current = managed_codex_provider("current", "old-local-id");
             state.db.save_provider("codex", &current).unwrap();
-            ProviderService::switch(&state, AppType::Codex, "current").unwrap();
+            ProviderService::switch(
+                &state,
+                AppType::Codex,
+                "current",
+                crate::schedule_rules::SwitchSource::Manual,
+            )
+            .unwrap();
             runtime.block_on(async {
                 state
                     .proxy_service
@@ -3727,7 +3745,13 @@ wire_api = "responses"
                         .unwrap();
                     let current = managed_codex_provider("current", "old");
                     state.db.save_provider("codex", &current).unwrap();
-                    ProviderService::switch(state, AppType::Codex, "current").unwrap();
+                    ProviderService::switch(
+                        state,
+                        AppType::Codex,
+                        "current",
+                        crate::schedule_rules::SwitchSource::Manual,
+                    )
+                    .unwrap();
                     let mut auth: Value =
                         read_json_file(&crate::codex_config::get_codex_auth_path()).unwrap();
                     if takeover {
@@ -3772,7 +3796,12 @@ wire_api = "responses"
                     );
                     state.db.save_provider("codex", &target).unwrap();
                     let before = crate::codex_config::CodexLiveStateSnapshot::capture().unwrap();
-                    let result = ProviderService::switch(&restarted, AppType::Codex, "target");
+                    let result = ProviderService::switch(
+                        &restarted,
+                        AppType::Codex,
+                        "target",
+                        crate::schedule_rules::SwitchSource::Manual,
+                    );
                     if corrupt {
                         assert!(result.is_err());
                         assert_eq!(

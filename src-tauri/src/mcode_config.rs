@@ -388,8 +388,13 @@ mod tests {
         ProviderService::add(&state, AppType::Mcode, provider.clone(), false)
             .expect("Save catalog entry");
         assert!(!get_providers().unwrap().contains_key(&provider.id));
-        ProviderService::switch(&state, AppType::Mcode, &provider.id)
-            .expect("Add to live configuration");
+        ProviderService::switch(
+            &state,
+            AppType::Mcode,
+            &provider.id,
+            crate::schedule_rules::SwitchSource::Manual,
+        )
+        .expect("Add to live configuration");
         assert!(get_providers().unwrap().contains_key(&provider.id));
         assert!(ProviderService::current(&state, AppType::Mcode)
             .unwrap()
@@ -426,7 +431,13 @@ mod tests {
         ProviderService::remove_from_live_config(&state, AppType::Mcode, &provider.id)
             .expect("Remove from live");
         assert!(!get_providers().unwrap().contains_key(&provider.id));
-        ProviderService::switch(&state, AppType::Mcode, &provider.id).expect("Re-add to live");
+        ProviderService::switch(
+            &state,
+            AppType::Mcode,
+            &provider.id,
+            crate::schedule_rules::SwitchSource::Manual,
+        )
+        .expect("Re-add to live");
         ProviderService::delete(&state, AppType::Mcode, &provider.id).expect("Delete provider");
         assert!(!get_providers().unwrap().contains_key(&provider.id));
         assert!(read(&config_path()).unwrap() == before);
