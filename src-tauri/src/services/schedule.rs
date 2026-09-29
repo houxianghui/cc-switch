@@ -327,6 +327,8 @@ impl ScheduleService {
     /// Internal evaluation logic (spec 5.4 decision table). Updates the decision-epoch
     /// ledger before applying the manual-pin check, so window roll-over is handled.
     async fn evaluate_for_app_inner(&self, app: &str) -> Result<AppEvalReport, AppError> {
+        let app_type = AppType::from_str(app)
+            .map_err(|e| AppError::Message(format!("unknown app {app}: {e}")))?;
         let now = Local::now();
         let rules = self.db.list_schedule_rules(Some(app))?;
         let active = resolve_active_rule(&rules, now);
@@ -371,8 +373,13 @@ impl ScheduleService {
 
         // Spec 5.4: a target that already equals the current provider is a no-op.
         // Without this every tick rewrote the live config, re-synced MCP and appended a
-        // switch_log row — about 1440 rows per app per day.
-        let current = self.db.get_current_provider(app)?;
+        // switch_log row — about 1440 rows per app per day. The schedule writes the direct
+        // pointer when it fires, so "current" here is the direct pointer.
+        let current = crate::mode::current::provider_for(
+            &self.db,
+            &app_type,
+            crate::mode::current::Purpose::Direct,
+        )?;
         if current.as_deref() == Some(target_provider.as_str()) {
             return Ok(AppEvalReport {
                 app: app.into(),
@@ -439,8 +446,6 @@ impl ScheduleService {
         }
 
         // Fire: call the switch closure, append a log entry, then enforce retention.
-        let app_type = AppType::from_str(app)
-            .map_err(|e| AppError::Message(format!("unknown app {app}: {e}")))?;
         (self.switch_fn)(app_type, target_provider.clone(), SwitchSource::Scheduled).await?;
         let now_iso = now.to_rfc3339();
         log::info!("[schedule] {app} switched to {target_provider} ({target_reason})");
