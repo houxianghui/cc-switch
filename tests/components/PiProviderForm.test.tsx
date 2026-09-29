@@ -14,6 +14,10 @@ import { server } from "../msw/server";
 
 const TAURI_ENDPOINT = "http://tauri.local";
 
+// These form tests render the full PiProviderForm with MSW; on slower
+// machines individual cases exceed the 5s default timeout.
+vi.setConfig({ testTimeout: 60_000 });
+
 function completeModel(id: string, name = id.trim() || "Model") {
   return {
     id,
@@ -801,6 +805,8 @@ describe("PiProviderForm", () => {
     expect(config.models.map((model: { id: string }) => model.id)).toEqual([
       "kimi-k2.7-code",
       "kimi-k3",
+      "kimi-k2.7-code-highspeed",
+      "kimi-k2.6",
     ]);
     expect(
       config.models.map((model: { id: string; name?: string }) => ({
@@ -810,6 +816,8 @@ describe("PiProviderForm", () => {
     ).toEqual([
       { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
       { id: "kimi-k3", name: "Kimi K3" },
+      { id: "kimi-k2.7-code-highspeed", name: "Kimi K2.7 Code HighSpeed" },
+      { id: "kimi-k2.6", name: "Kimi K2.6" },
     ]);
     for (const model of config.models) {
       expect(model).toMatchObject({
@@ -1344,22 +1352,25 @@ describe("PiProviderForm", () => {
 
   it("edits Pi thinking-map missing, null, and string states from the collapsed capability area", async () => {
     const user = userEvent.setup();
+    // Start with a model so this test exercises thinking-map interactions without
+    // repeating the separately covered preset selection and model creation flow.
     render(
       <PiProviderForm
         appId="pi"
+        providerId="custom-provider"
         submitLabel="Save custom thinking map"
         onSubmit={vi.fn()}
         onCancel={() => {}}
+        initialData={{
+          name: "Custom reasoning provider",
+          settingsConfig: {
+            api: "openai-completions",
+            models: [completeModel("custom-reasoning-model")],
+          },
+        }}
       />,
     );
 
-    await user.click(
-      screen.getByRole("button", { name: "providerPreset.custom" }),
-    );
-    await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
-    fireEvent.change(screen.getByLabelText("pi.form.modelId"), {
-      target: { value: "custom-reasoning-model" },
-    });
     await user.click(
       screen.getByRole("button", { name: "展开或收起模型详情" }),
     );

@@ -132,12 +132,9 @@ pub fn import_provider_from_deeplink(
 
     // If enabled=true, set as current provider
     if merged_request.enabled.unwrap_or(false) {
-        ProviderService::switch(
-            state,
-            app_type.clone(),
-            &provider_id,
-            crate::schedule_rules::SwitchSource::Deeplink,
-        )?;
+        // Deeplink-originated switches do not pin the scheduler (see
+        // schedule_rules::SwitchSource); call the plain 3-arg switch.
+        ProviderService::switch(state, app_type.clone(), &provider_id)?;
         log::info!("Provider '{provider_id}' set as current for {app_type:?}");
     }
 

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeAll } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import i18n from "i18next";
 import { AddEditRuleDialog } from "@/components/schedule/AddEditRuleDialog";
+import { APP_IDS } from "@/config/appConfig";
 import type { ScheduleRuleDto } from "@/lib/api/schedule";
 
 const mutations = vi.hoisted(() => ({
@@ -125,7 +126,7 @@ describe("AddEditRuleDialog", () => {
     const [appSelect] = selects();
     expect(appSelect).not.toBeDisabled();
     expect(appSelect.value).toBe("claude");
-    expect(appSelect.querySelectorAll("option")).toHaveLength(9);
+    expect(appSelect.querySelectorAll("option")).toHaveLength(APP_IDS.length);
   });
 
   it("resets provider_id when the app changes", async () => {

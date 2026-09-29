@@ -382,7 +382,7 @@ mod tests {
         assert_eq!(meta.custom_user_agent, None);
         assert_eq!(meta.is_partner, Some(true));
 
-        ProviderService::switch(
+        ProviderService::switch_with_source(
             &state,
             AppType::Pi,
             "cc-switch-test",
@@ -422,7 +422,7 @@ mod tests {
             .expect("global default must not block removal");
         assert!(!crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
 
-        ProviderService::switch(
+        ProviderService::switch_with_source(
             &state,
             AppType::Pi,
             "cc-switch-test",
@@ -470,7 +470,7 @@ mod tests {
         ProviderService::list(&state, AppType::Pi).expect("import explicit provider");
         ProviderService::remove_from_live_config(&state, AppType::Pi, "anthropic")
             .expect("remove explicit provider");
-        ProviderService::switch(
+        ProviderService::switch_with_source(
             &state,
             AppType::Pi,
             "anthropic",
@@ -684,7 +684,7 @@ mod tests {
             minimal
         );
 
-        ProviderService::switch(
+        ProviderService::switch_with_source(
             &state,
             AppType::Pi,
             "cc-switch-test",
@@ -748,7 +748,7 @@ mod tests {
         copy.name = "Test provider copy".to_string();
 
         ProviderService::add(&state, AppType::Pi, copy, false).expect("save copied provider");
-        ProviderService::switch(
+        ProviderService::switch_with_source(
             &state,
             AppType::Pi,
             "cc-switch-test-copy",
@@ -887,7 +887,7 @@ mod tests {
 
         ProviderService::remove_from_live_config(&state, AppType::Pi, "cc-switch-test")
             .expect("global selection is advisory for removal");
-        ProviderService::switch(
+        ProviderService::switch_with_source(
             &state,
             AppType::Pi,
             "cc-switch-test",
