@@ -68,7 +68,8 @@ impl Database {
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
-            enabled_hermes BOOLEAN NOT NULL DEFAULT 0
+            enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_pi BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -627,11 +628,23 @@ impl Database {
                     19 => {
                         // v19 有两种来源：上游链（有 enabled_mcode、无定时切换表）和
                         // 本 fork 链（恰好相反）。两个迁移都幂等，全部重放一遍让
-                        // 两种 v19 库都收敛到完整的 v20。
-                        log::info!("迁移数据库从 v19 到 v20（补齐定时切换表与 enabled_mcode 列）");
+                        // 两种 v19 库都收敛到完整的 v20（含上游的 enabled_pi 列）。
+                        log::info!(
+                            "迁移数据库从 v19 到 v20（补齐定时切换表、enabled_mcode 与 enabled_pi 列）"
+                        );
                         Self::migrate_v18_to_v19(conn)?;
                         Self::ensure_mcode_columns(conn)?;
+                        Self::ensure_pi_column(conn)?;
                         Self::set_user_version(conn, 20)?;
+                    }
+                    20 => {
+                        // v20 同样有两种来源：上游 v20（有 enabled_pi、无定时切换表）和
+                        // 本 fork v20（恰好相反）。全部幂等重放，让两种 v20 库收敛到 v21。
+                        log::info!("迁移数据库从 v20 到 v21（补齐定时切换表与 enabled_pi 列）");
+                        Self::migrate_v18_to_v19(conn)?;
+                        Self::ensure_mcode_columns(conn)?;
+                        Self::ensure_pi_column(conn)?;
+                        Self::set_user_version(conn, 21)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1747,6 +1760,20 @@ impl Database {
         Ok(())
     }
 
+    /// MCP 表补齐 `enabled_pi` 列（Pi 支持，上游 v19→v20 的内容）。
+    /// 幂等：v19→v20 与 v20→v21 两个迁移臂都会调用，见 dispatcher 注释。
+    fn ensure_pi_column(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "mcp_servers")? {
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_pi",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+        Ok(())
+    }
+
     /// 插入默认模型定价数据
     /// 格式: (model_id, display_name, input, output, cache_read, cache_creation)
     /// 注意: model_id 使用短横线格式（如 claude-haiku-4-5），与 API 返回的模型名称标准化后一致
@@ -1927,6 +1954,9 @@ impl Database {
             // effort 档 low/medium/high/xhigh 由查价剥后缀回落到本行；max 不在剥离列表
             //（会与 *-max 真 id 撞名），不另加后缀行。
             ("gpt-6-astra", "GPT-6 Astra", "10", "50", "1", "12.5"),
+            // GPT-6.1 Sol: Standard short-context pricing; cached input is 0.05× input.
+            // https://developers.openai.com/api/docs/models/gpt-6.1-sol
+            ("gpt-6.1-sol", "GPT-6.1 Sol", "2", "10", "0.10", "2.50"),
             ("gpt-6-sol", "GPT-6 Sol", "2", "10", "0.20", "2.50"),
             ("gpt-6-luna", "GPT-6 Luna", "0.10", "0.50", "0.01", "0.125"),
             // GPT-5.6 系列（Sol / Terra / Luna，2026-06 发布）
@@ -3907,6 +3937,31 @@ mod tests {
         )?;
         assert_eq!(codex_values, (1, 9));
 
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v19_to_v20_adds_pi_mcp_flag_and_keeps_existing_flags() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (
+                id TEXT PRIMARY KEY,
+                enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+                enabled_mcode BOOLEAN NOT NULL DEFAULT 0
+            );
+            INSERT INTO mcp_servers (id, enabled_codex, enabled_mcode) VALUES ('mcp-1', 1, 1);",
+        )?;
+        Database::set_user_version(&conn, 19)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let values: (i64, i64, i64) = conn.query_row(
+            "SELECT enabled_codex, enabled_mcode, enabled_pi FROM mcp_servers WHERE id = 'mcp-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(values, (1, 1, 0));
         Ok(())
     }
 
