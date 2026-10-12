@@ -373,12 +373,15 @@ impl ScheduleService {
 
         // Spec 5.4: a target that already equals the current provider is a no-op.
         // Without this every tick rewrote the live config, re-synced MCP and appended a
-        // switch_log row — about 1440 rows per app per day. The schedule writes the direct
-        // pointer when it fires, so "current" here is the direct pointer.
+        // switch_log row — about 1440 rows per app per day. "Current" is whatever pointer
+        // the switch actually mutates: in proxy mode the switch only re-routes (never the direct
+        // pointer), so reading Purpose::Direct here never matches the target and the
+        // scheduler re-fires every tick — and conversely a window roll-over back to the
+        // direct pointer's provider was wrongly deduplicated away, leaving the model unchanged.
         let current = crate::mode::current::provider_for(
             &self.db,
             &app_type,
-            crate::mode::current::Purpose::Direct,
+            crate::mode::current::Purpose::InUse,
         )?;
         if current.as_deref() == Some(target_provider.as_str()) {
             return Ok(AppEvalReport {
@@ -1201,5 +1204,108 @@ mod tests {
         assert!(svc
             .next_switch_for("claude", local_at(wednesday(), 8, 0))
             .is_none());
+    }
+
+    // --- Proxy mode: the `same_provider` no-op must read the pointer the switch mutates ---
+    //
+    // In proxy mode `ProviderService::switch` only re-routes; it never touches the direct
+    // pointer. `Purpose::Direct` therefore never equals the rule target, so the scheduler
+    // re-fired every tick — and, on a window roll-over back to the direct pointer's provider,
+    // it wrongly deduplicated away the switch, leaving the model in use unchanged.
+
+    /// RAII guard that points `get_home_dir()` at an isolated temp dir and seeds the device
+    /// `live-state.json` that `mode::current::provider_for(Purpose::InUse)` reads for proxy mode.
+    struct ProxyHome {
+        // Held only for its Drop: keeps the isolated temp home alive until the test returns.
+        _dir: tempfile::TempDir,
+        saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
+
+    impl ProxyHome {
+        fn new(route: &str) -> Self {
+            let dir = tempfile::TempDir::new().expect("temp home");
+            let saved = ["CC_SWITCH_TEST_HOME", "HOME", "USERPROFILE"]
+                .into_iter()
+                .map(|key| {
+                    let old = std::env::var_os(key);
+                    std::env::set_var(key, dir.path());
+                    (key, old)
+                })
+                .collect();
+            let state_dir = dir.path().join(".cc-switch");
+            std::fs::create_dir_all(&state_dir).unwrap();
+            let state = serde_json::json!({
+                "version": 1,
+                "apps": {
+                    "claude": { "mode": "proxy", "attached": true, "proxy_route": route }
+                }
+            });
+            std::fs::write(state_dir.join("live-state.json"), state.to_string()).unwrap();
+            Self { _dir: dir, saved }
+        }
+    }
+
+    impl Drop for ProxyHome {
+        fn drop(&mut self) {
+            for (key, old) in self.saved.drain(..) {
+                match old {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn proxy_mode_same_provider_is_a_noop() {
+        let _home = ProxyHome::new("route-proxy");
+        let db = Arc::new(Database::memory().unwrap());
+        insert_provider(&db, "claude", "route-proxy");
+        insert_provider(&db, "claude", "direct-other");
+        // The direct pointer sits on a *different* provider than the proxy route, which is
+        // exactly the state a proxy-mode switch leaves behind (it re-routes, never re-points).
+        db.set_current_provider("claude", "direct-other").unwrap();
+        let fired: FiredLog = Arc::new(Mutex::new(Vec::new()));
+        let svc = make_svc(db.clone(), fired.clone());
+
+        let (start, end) = wide_window_around_now();
+        db.create_schedule_rule(&rule_req("claude", "route-proxy", all_dow(), start, end))
+            .unwrap();
+
+        let report = svc.evaluate_for_app("claude").await.unwrap();
+        assert!(
+            !report.fired,
+            "a proxy route already on the target must be a no-op: {report:?}"
+        );
+        assert_eq!(report.skipped_due_to.as_deref(), Some("same_provider"));
+        assert!(fired.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn proxy_mode_fires_when_route_differs_from_target() {
+        let _home = ProxyHome::new("route-proxy");
+        let db = Arc::new(Database::memory().unwrap());
+        insert_provider(&db, "claude", "route-proxy");
+        insert_provider(&db, "claude", "rule-target");
+        db.set_current_provider("claude", "route-proxy").unwrap();
+        let fired: FiredLog = Arc::new(Mutex::new(Vec::new()));
+        let svc = make_svc(db.clone(), fired.clone());
+
+        // The rule targets a provider different from the proxy route, so it must fire
+        // even though the direct pointer equals the route.
+        let (start, end) = wide_window_around_now();
+        db.create_schedule_rule(&rule_req("claude", "rule-target", all_dow(), start, end))
+            .unwrap();
+
+        let report = svc.evaluate_for_app("claude").await.unwrap();
+        assert!(
+            report.fired,
+            "a target differing from the proxy route must fire: {report:?}"
+        );
+        assert_eq!(report.to_provider.as_deref(), Some("rule-target"));
+        assert_eq!(fired.lock().unwrap().len(), 1);
+        assert_eq!(fired.lock().unwrap()[0].1, "rule-target");
     }
 }
