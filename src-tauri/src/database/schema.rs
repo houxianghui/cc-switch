@@ -4188,7 +4188,7 @@ mod tests {
             )?;
             Database::set_user_version(&conn, 19)?;
             Database::apply_schema_migrations_on_conn(&conn)?;
-            assert_eq!(Database::get_user_version(&conn)?, 20);
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
             let tables: i64 = conn.query_row(
                 "SELECT COUNT(*) FROM sqlite_master
                  WHERE type='table' AND name IN
@@ -4218,7 +4218,7 @@ mod tests {
             )?;
             Database::set_user_version(&conn, 19)?;
             Database::apply_schema_migrations_on_conn(&conn)?;
-            assert_eq!(Database::get_user_version(&conn)?, 20);
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
             for table in ["mcp_servers", "skills"] {
                 let mcode: i64 = conn.query_row(
                     &format!(
