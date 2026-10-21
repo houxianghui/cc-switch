@@ -68,6 +68,7 @@ impl Database {
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0
         )",
@@ -99,6 +100,7 @@ impl Database {
             enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
@@ -639,12 +641,28 @@ impl Database {
                     }
                     20 => {
                         // v20 同样有两种来源：上游 v20（有 enabled_pi、无定时切换表）和
-                        // 本 fork v20（恰好相反）。全部幂等重放，让两种 v20 库收敛到 v21。
-                        log::info!("迁移数据库从 v20 到 v21（补齐定时切换表与 enabled_pi 列）");
+                        // 本 fork v20（恰好相反）。全部幂等重放（含上游 v20→v21 的
+                        // enabled_agy 列），让两种 v20 库都收敛到完整的 v21。
+                        log::info!(
+                            "迁移数据库从 v20 到 v21（补齐定时切换表、enabled_pi 与 enabled_agy 列）"
+                        );
                         Self::migrate_v18_to_v19(conn)?;
                         Self::ensure_mcode_columns(conn)?;
                         Self::ensure_pi_column(conn)?;
+                        Self::ensure_agy_columns(conn)?;
                         Self::set_user_version(conn, 21)?;
+                    }
+                    21 => {
+                        // v21 同样有两种来源：上游 v21（有 enabled_agy、无定时切换表）和
+                        // 本 fork v21（恰好相反）。全部幂等重放，让两种 v21 库收敛到 v22。
+                        log::info!(
+                            "迁移数据库从 v21 到 v22（补齐定时切换表、enabled_pi 与 enabled_agy 列）"
+                        );
+                        Self::migrate_v18_to_v19(conn)?;
+                        Self::ensure_mcode_columns(conn)?;
+                        Self::ensure_pi_column(conn)?;
+                        Self::ensure_agy_columns(conn)?;
+                        Self::set_user_version(conn, 22)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1770,6 +1788,22 @@ impl Database {
                 "enabled_pi",
                 "BOOLEAN NOT NULL DEFAULT 0",
             )?;
+        }
+        Ok(())
+    }
+
+    /// MCP/Skills 表补齐 `enabled_agy` 列（Antigravity 支持，上游 v20→v21 的内容）。
+    /// 幂等：v20→v21 与 v21→v22 两个迁移臂都会调用，见 dispatcher 注释。
+    fn ensure_agy_columns(conn: &Connection) -> Result<(), AppError> {
+        for table in ["mcp_servers", "skills"] {
+            if Self::table_exists(conn, table)? {
+                Self::add_column_if_missing(
+                    conn,
+                    table,
+                    "enabled_agy",
+                    "BOOLEAN NOT NULL DEFAULT 0",
+                )?;
+            }
         }
         Ok(())
     }
@@ -4028,6 +4062,49 @@ mod tests {
     }
 
     #[test]
+    fn agy_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_gemini BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_codex BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 20)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        // fork 的 SCHEMA_VERSION 比上游高（双谱系收敛臂），断言常量而非硬编码数字
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for (table, flag) in [
+            ("mcp_servers", "enabled_gemini"),
+            ("skills", "enabled_codex"),
+        ] {
+            let row = conn.query_row(
+                &format!("SELECT {flag}, enabled_agy FROM {table}"),
+                [],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!(row, (1, 0));
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
+    #[test]
+    fn agy_clean_database_persists_independent_mcp_and_skill_flags() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let mut server: crate::app_config::McpServer = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"echo"}, "apps":{"gemini":true,"agy":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        server.apps.agy = false;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Agy, false)?;
+        assert_eq!(db.get_all_mcp_servers()?["m"].apps, server.apps);
+        let skill: crate::app_config::InstalledSkill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "directory":"s", "installedAt":0, "apps":{"agy":true,"gemini":true}})).unwrap();
+        db.save_skill(&skill)?;
+        assert!(db.get_installed_skill("s")?.unwrap().apps.agy);
+        let mut apps = skill.apps;
+        apps.agy = false;
+        db.update_skill_apps("s", &apps)?;
+        let read = db.get_all_installed_skills()?;
+        assert!(!read["s"].apps.agy);
+        assert!(read["s"].apps.gemini);
+        Ok(())
+    }
+
+    #[test]
     fn migrate_v19_to_v20_adds_pi_mcp_flag_and_keeps_existing_flags() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(
@@ -4281,6 +4358,67 @@ mod tests {
                     mcode, 1,
                     "fork-flavor v19 must gain enabled_mcode on {table}"
                 );
+            }
+        }
+        Ok(())
+    }
+
+    /// v21 库有两种来源：上游链（有 enabled_agy、无定时切换表）和本 fork 链
+    /// （恰好相反）。v21→v22 迁移臂重放全部幂等迁移，两种库都必须收敛到完整 v22。
+    #[test]
+    fn migrate_v21_to_v22_converges_upstream_and_fork_flavors() -> Result<(), AppError> {
+        // 上游风味 v21：删掉定时切换四张表，保留 enabled_agy
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute_batch(
+                "DROP TABLE schedule_rules;
+                 DROP TABLE app_schedule_state;
+                 DROP TABLE app_fallback_providers;
+                 DROP TABLE schedule_switch_log;",
+            )?;
+            Database::set_user_version(&conn, 21)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            let tables: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type='table' AND name IN
+                   ('schedule_rules','app_schedule_state','app_fallback_providers','schedule_switch_log')",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(
+                tables, 4,
+                "upstream-flavor v21 must gain the schedule tables"
+            );
+            let agy: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('mcp_servers') WHERE name='enabled_agy'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(agy, 1, "enabled_agy must survive");
+        }
+
+        // fork 风味 v21：有定时切换表、缺 enabled_agy 列
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute_batch(
+                "ALTER TABLE mcp_servers DROP COLUMN enabled_agy;
+                 ALTER TABLE skills DROP COLUMN enabled_agy;",
+            )?;
+            Database::set_user_version(&conn, 21)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            for table in ["mcp_servers", "skills"] {
+                let agy: i64 = conn.query_row(
+                    &format!(
+                        "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name='enabled_agy'"
+                    ),
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(agy, 1, "fork-flavor v21 must gain enabled_agy on {table}");
             }
         }
         Ok(())
