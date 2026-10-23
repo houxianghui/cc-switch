@@ -69,6 +69,7 @@ impl Database {
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
+            enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0
         )",
@@ -101,6 +102,7 @@ impl Database {
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
+            enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
@@ -654,15 +656,26 @@ impl Database {
                     }
                     21 => {
                         // v21 同样有两种来源：上游 v21（有 enabled_agy、无定时切换表）和
-                        // 本 fork v21（恰好相反）。全部幂等重放，让两种 v21 库收敛到 v22。
+                        // 本 fork v21（恰好相反）。全部幂等重放（含上游 v21→v22 的
+                        // enabled_kimi 列），让两种 v21 库都收敛到完整的 v22。
                         log::info!(
-                            "迁移数据库从 v21 到 v22（补齐定时切换表、enabled_pi 与 enabled_agy 列）"
+                            "迁移数据库从 v21 到 v22（补齐定时切换表、enabled_pi、enabled_agy 与 enabled_kimi 列）"
                         );
                         Self::migrate_v18_to_v19(conn)?;
                         Self::ensure_mcode_columns(conn)?;
                         Self::ensure_pi_column(conn)?;
                         Self::ensure_agy_columns(conn)?;
+                        Self::ensure_kimi_columns(conn)?;
                         Self::set_user_version(conn, 22)?;
+                    }
+                    22 => {
+                        // 上游把 v21→v22 用于 enabled_kimi，本 fork 的 v22 是双谱系收敛臂。
+                        // 两种来源都存在：上游 v22（无定时切换表）与本 fork v22（有定时切换表）。
+                        // 全部幂等重放，收敛到 v23。
+                        log::info!("迁移数据库从 v22 到 v23（补齐定时切换表与 enabled_kimi 列）");
+                        Self::migrate_v18_to_v19(conn)?;
+                        Self::ensure_kimi_columns(conn)?;
+                        Self::set_user_version(conn, 23)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1808,6 +1821,21 @@ impl Database {
         Ok(())
     }
 
+    /// 补齐上游 v21→v22 引入的 `enabled_kimi` 列（幂等）。
+    fn ensure_kimi_columns(conn: &Connection) -> Result<(), AppError> {
+        for table in ["mcp_servers", "skills"] {
+            if Self::table_exists(conn, table)? {
+                Self::add_column_if_missing(
+                    conn,
+                    table,
+                    "enabled_kimi",
+                    "BOOLEAN NOT NULL DEFAULT 0",
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     /// 插入默认模型定价数据
     /// 格式: (model_id, display_name, input, output, cache_read, cache_creation)
     /// 注意: model_id 使用短横线格式（如 claude-haiku-4-5），与 API 返回的模型名称标准化后一致
@@ -2553,6 +2581,17 @@ impl Database {
             ),
             (
                 "deepseek-flash",
+                "DeepSeek V4.1 Flash",
+                "0.3",
+                "1.2",
+                "0.006",
+                "0",
+            ),
+            // 第三方上游（OpenCode Go、OpenRouter 的 deepseek/ 命名空间、Hermes 预设等）用带版本号的
+            // deepseek-v4.1-flash。点号版本既剥不成 deepseek-flash，前缀兜底也只命中更长的行，
+            // 不单列会显示「未定价」并按 0 计费
+            (
+                "deepseek-v4.1-flash",
                 "DeepSeek V4.1 Flash",
                 "0.3",
                 "1.2",
@@ -4058,6 +4097,45 @@ mod tests {
         )?;
         assert_eq!(codex_values, (1, 9));
 
+        Ok(())
+    }
+
+    #[test]
+    fn kimi_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_codex BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_claude BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 21)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for (table, flag) in [
+            ("mcp_servers", "enabled_codex"),
+            ("skills", "enabled_claude"),
+        ] {
+            let flags = conn.query_row(
+                &format!("SELECT {flag}, enabled_kimi FROM {table}"),
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!(flags, (1, 0));
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
+    #[test]
+    fn kimi_clean_database_persists_mcp_and_skill_flags_independently() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let server = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"echo"}, "apps":{"kimi":true,"codex":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Kimi, false)?;
+        let saved = db.get_all_mcp_servers()?;
+        assert!(!saved["m"].apps.kimi);
+        assert!(saved["m"].apps.codex);
+        let skill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "description":"", "directory":"s", "apps":{"kimi":true,"claude":true}, "installedAt":0})).unwrap();
+        db.save_skill(&skill)?;
+        let saved = db.get_installed_skill("s")?.unwrap();
+        assert!(saved.apps.kimi && saved.apps.claude);
+        assert!(db.get_all_installed_skills()?["s"].apps.kimi);
         Ok(())
     }
 
